@@ -39,10 +39,8 @@ import {
 // ⚙️ 系統設定區 (System Config)
 // ==========================================
 
-// 1. 若要啟用雲端同步，請將此設為 true
 const ENABLE_FIREBASE = false; 
 
-// 2. 在此填入您的 Firebase 設定 (從 Firebase Console 取得)
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
   authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
@@ -67,31 +65,26 @@ const getFutureDate = (days) => {
   return d.toISOString().split('T')[0];
 };
 
-// 檢查日期是否為未來
 const isFutureDate = (dateStr) => {
   return dateStr > getTodayString();
 };
 
-// 格式化日期物件為 YYYY-MM-DD
 const formatDate = (dateObj) => {
   return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
 };
 
-// 解析頻率字串為天數
 const getIntervalDays = (freqString) => {
   const match = freqString.match(/每 (\d+) 天/);
   if (match) return parseInt(match[1], 10);
-  return 7; // default fallback
+  return 7; 
 };
 
-// --- 模擬資料設定 ---
 const INITIAL_USERS = [
-  { id: 'u1', name: '王小明', balance: -150, avatar: 'bg-blue-400' }, // 模擬負債
+  { id: 'u1', name: '王小明', balance: -150, avatar: 'bg-blue-400' }, 
   { id: 'u2', name: '李大華', balance: 50, avatar: 'bg-emerald-400' },
-  { id: 'u3', name: '陳小美', balance: 100, avatar: 'bg-rose-400' }, // 模擬債權人
+  { id: 'u3', name: '陳小美', balance: 100, avatar: 'bg-rose-400' }, 
 ];
 
-// 初始化任務設定
 const INITIAL_TASK_CONFIG = [
   { id: 't1', name: '倒垃圾', price: 30, freq: '每 7 天', icon: '🗑️', defaultAssigneeId: 'u1', nextDate: getTodayString() },
   { id: 't2', name: '倒回收', price: 30, freq: '每 7 天', icon: '♻️', defaultAssigneeId: 'u2', nextDate: getFutureDate(1) },
@@ -105,7 +98,6 @@ const AVATAR_COLORS = [
   'bg-violet-400', 'bg-red-400', 'bg-[#28C8C8]', 'bg-orange-400'
 ];
 
-// --- Mock LIFF (模擬 LINE 環境) ---
 const mockLiff = {
   isInClient: true, 
   sendMessages: (messages) => {
@@ -122,41 +114,34 @@ const mockLiff = {
 // ==========================================
 
 export default function RoomieTaskApp() {
-  // --- Data State ---
   const [users, setUsers] = useState(INITIAL_USERS);
+  const [currentUser, setCurrentUser] = useState(INITIAL_USERS[0]); 
   const [taskConfigs, setTaskConfigs] = useState(INITIAL_TASK_CONFIG); 
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]); 
   const [logs, setLogs] = useState([]); 
   
-  // --- UI State ---
-  const [currentUser, setCurrentUser] = useState(null); 
   const [view, setView] = useState('roster'); 
   const [rosterViewMode, setRosterViewMode] = useState('list'); 
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
   const [calendarMonth, setCalendarMonth] = useState(new Date()); 
   
-  // Lists UI (Pagination & Accordion)
   const [visibleMyTasksCount, setVisibleMyTasksCount] = useState(5);
   const [visibleAllTasksCount, setVisibleAllTasksCount] = useState(5);
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
   const [isTaskListOpen, setIsTaskListOpen] = useState(true);
 
-  // Forms
   const [isEditingTask, setIsEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({ name: '', price: '', freq: '每 7 天', icon: '🧹', defaultAssigneeId: '', nextDate: getTodayString() });
   const [customDays, setCustomDays] = useState(7);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [userForm, setUserForm] = useState({ name: '', avatar: 'bg-blue-400' });
 
-  // Modal
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', type: 'confirm', onConfirm: () => {} });
 
-  // --- Initialization ---
   useEffect(() => {
     if (!users.find(u => u.id === currentUser?.id) && users.length > 0) {
       setCurrentUser(users[0]);
     }
-
     if (currentCycleTasks.length === 0 && users.length > 0) {
       dispatchTasksFromConfig(); 
     }
@@ -168,14 +153,12 @@ export default function RoomieTaskApp() {
     }
   }, [users]);
 
-  // --- Logic: Core ---
-
   const dispatchTasksFromConfig = () => {
     if (users.length === 0) return;
     
     const generatedTasks = [];
     const limitDate = new Date();
-    limitDate.setDate(limitDate.getDate() + 45); // Generate 45 days
+    limitDate.setDate(limitDate.getDate() + 45); 
 
     taskConfigs.forEach((config) => {
       const interval = getIntervalDays(config.freq);
@@ -210,13 +193,11 @@ export default function RoomieTaskApp() {
     generatedTasks.sort((a, b) => a.date.localeCompare(b.date));
 
     setCurrentCycleTasks(generatedTasks);
-    // 重置分頁計數
     setVisibleMyTasksCount(5);
     setVisibleAllTasksCount(5);
     setView('roster');
   };
 
-  // --- Logic: Settlement ---
   const calculateSettlements = () => {
     let debtors = users.filter(u => u.balance < 0).map(u => ({...u})).sort((a, b) => a.balance - b.balance);
     let creditors = users.filter(u => u.balance > 0).map(u => ({...u})).sort((a, b) => b.balance - a.balance);
@@ -243,7 +224,6 @@ export default function RoomieTaskApp() {
     return settlements;
   };
 
-  // --- Logic: UI Helpers ---
   const showConfirm = (title, message, onConfirm) => setConfirmModal({ isOpen: true, title, message, type: 'confirm', onConfirm });
   const showAlert = (title, message) => setConfirmModal({ isOpen: true, title, message, type: 'alert', onConfirm: () => {} });
   const closeConfirmModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -261,8 +241,6 @@ export default function RoomieTaskApp() {
     try { if (mockLiff.isInClient) await mockLiff.sendMessages([{ type: 'text', text }]); } 
     catch (err) { console.error('LIFF Error:', err); }
   };
-
-  // --- Logic: CRUD Actions ---
 
   const saveTaskConfig = () => {
     if (!editForm.name || editForm.price === '' || Number(editForm.price) < 0 || !editForm.nextDate) return;
@@ -321,8 +299,6 @@ export default function RoomieTaskApp() {
     });
   };
 
-  // --- Logic: Task Actions ---
-
   const updateBalance = (userId, amount) => {
     if (!userId) return;
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: u.balance + amount } : u));
@@ -351,7 +327,6 @@ export default function RoomieTaskApp() {
     sendLineNotify('CLAIM', { user: currentUser.name, task: task.name, price: task.price });
   };
 
-  // --- Logic: Editor State ---
   const openEditor = (task = null) => {
     setIsEditingTask(task ? task.id : null);
     const defaultUser = users.length > 0 ? users[0].id : '';
@@ -385,9 +360,10 @@ export default function RoomieTaskApp() {
   );
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans max-w-md mx-auto border-x border-gray-200 shadow-2xl overflow-hidden relative">
+    // 1. App Wrapper: 固定全螢幕，防止手機瀏覽器上下彈跳
+    <div className="fixed inset-0 flex flex-col bg-gray-50 font-sans max-w-md mx-auto border-x border-gray-200 shadow-2xl overflow-hidden h-[100dvh]">
       
-      {/* Modal */}
+      {/* Modal Overlay */}
       {confirmModal.isOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
@@ -407,34 +383,37 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-white px-4 py-4 border-b flex justify-between items-center sticky top-0 z-10 shrink-0">
+      {/* Header (Fixed) */}
+      <header className="flex-none bg-white px-4 py-4 border-b flex justify-between items-center z-10">
         <div className="flex items-center gap-2">
           <div><h1 className="font-bold text-gray-800 text-lg leading-tight">家事值日生</h1></div>
         </div>
         
-        {/* User Selector */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 bg-gray-100 rounded-full px-3 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
           <span className="text-xs text-gray-500 font-medium">我是</span>
-          <div className="flex items-center gap-2 bg-gray-100 rounded-full px-2 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
-            {currentUser && (
-              <>
-                <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border-2 border-white shadow-sm`}></div>
-                <select 
-                  className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-1 cursor-pointer"
-                  value={currentUser.id}
-                  onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
-                >
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </>
-            )}
-          </div>
+          {currentUser && (
+            <>
+              <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border-2 border-white shadow-sm`}></div>
+              <div className="relative">
+                  <select 
+                    className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-4 cursor-pointer z-10 relative"
+                    value={currentUser.id}
+                    onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
+                    style={{ textAlignLast: 'center' }} 
+                  >
+                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                     <ChevronDown size={12} />
+                  </div>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-scroll p-4 space-y-6">
+      {/* Main Content (Scrollable) */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 w-full relative">
 
         {/* VIEW: ROSTER */}
         {view === 'roster' && (
@@ -479,8 +458,12 @@ export default function RoomieTaskApp() {
                                       {task.icon}
                                     </div>
                                     <div>
-                                      <h4 className="font-bold text-gray-800">{task.name}</h4>
-                                      <span className={`text-xs px-1.5 rounded font-mono mt-1 inline-block ${task.date === getTodayString() ? 'bg-red-100 text-red-500 font-bold' : 'bg-gray-100 text-gray-500'}`}>{task.date === getTodayString() ? '今天' : task.date}</span>
+                                      <div className="flex items-center gap-2">
+                                        <h4 className="font-bold text-gray-800">{task.name}</h4>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className={`text-xs px-1.5 rounded font-mono ${task.date === getTodayString() ? 'bg-red-100 text-red-500 font-bold' : 'bg-gray-100 text-gray-500'}`}>{task.date === getTodayString() ? '今天' : task.date}</span>
+                                      </div>
                                     </div>
                                   </div>
                                   <div className="flex gap-2">
@@ -682,6 +665,7 @@ export default function RoomieTaskApp() {
         {/* VIEW: SETTINGS */}
         {view === 'settings' && (
           <div className="animate-fade-in">
+            {/* 室友管理區塊 */}
             <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm mb-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-gray-800 flex items-center gap-2"><Users size={18} /> 室友名單管理</h2>
@@ -804,9 +788,9 @@ export default function RoomieTaskApp() {
 
       </main>
 
-      {/* Tab Bar */}
+      {/* Tab Bar (Fixed Bottom, Safe Area) */}
       {view !== 'settings_editor' && (
-        <nav className="bg-white border-t flex justify-around pb-safe pt-1 sticky bottom-0 z-10 shrink-0">
+        <nav className="flex-none bg-white border-t flex justify-around pb-safe pt-1 z-10 pb-[env(safe-area-inset-bottom)]">
           <TabButton id="roster" label="值日表" icon={CalendarDays} />
           <TabButton id="wallet" label="帳本" icon={Wallet} />
           <TabButton id="settings" label="設定" icon={Settings} />
