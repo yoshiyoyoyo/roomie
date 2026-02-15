@@ -5,7 +5,7 @@ import { getDatabase, ref, onValue, set, update, serverTimestamp, remove } from 
 import { 
   Trash2, Sparkles, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
   CalendarDays, UserPlus, List, ChevronLeft, ChevronRight,
-  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home
+  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, RefreshCw
 } from 'lucide-react';
 
 // ==========================================
@@ -28,24 +28,36 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 // ==========================================
-// 🛠️ 工具函式
+// 🛠️ 工具函式 (安全版)
 // ==========================================
 
 const getTodayString = () => new Date().toISOString().split('T')[0];
-const isFutureDate = (dateStr) => dateStr > getTodayString();
+const isFutureDate = (dateStr) => {
+  if (!dateStr) return false;
+  return dateStr > getTodayString();
+};
 const generateGroupId = () => `rm-${Math.random().toString(36).substr(2, 9)}`;
+
+// 日曆輔助
 const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
 const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay(); 
 
+// 安全讀取 LocalStorage
 const getSavedGroups = () => {
   try {
-    return JSON.parse(localStorage.getItem('roomie_groups') || '[]');
-  } catch (e) { return []; }
+    const raw = localStorage.getItem('roomie_groups');
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { 
+    console.error("Storage Error", e);
+    return []; 
+  }
 };
 
 const saveGroupToLocal = (id, name) => {
   try {
     const groups = getSavedGroups();
+    // 確保 id 和 name 都是字串
+    if (!id || !name) return;
     const existing = groups.find(g => g.id === id);
     if (!existing) {
       const newGroups = [...groups, { id, name, lastVisited: Date.now() }];
@@ -54,14 +66,14 @@ const saveGroupToLocal = (id, name) => {
       const newGroups = groups.map(g => g.id === id ? { ...g, name, lastVisited: Date.now() } : g);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
     }
-  } catch (e) { console.error("Local storage error", e); }
+  } catch (e) { console.error("Save Error", e); }
 };
 
 const removeGroupFromLocal = (id) => {
   try {
     const groups = getSavedGroups().filter(g => g.id !== id);
     localStorage.setItem('roomie_groups', JSON.stringify(groups));
-  } catch (e) { console.error("Local storage error", e); }
+  } catch (e) {}
 };
 
 // ==========================================
@@ -81,6 +93,7 @@ export default function RoomieTaskApp() {
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]);
   const [logs, setLogs] = useState([]);
 
+  // UI State
   const [view, setView] = useState('roster');
   const [rosterViewMode, setRosterViewMode] = useState('list');
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
@@ -111,8 +124,8 @@ export default function RoomieTaskApp() {
         const profile = await liff.getProfile();
         const lineUser = {
           id: profile.userId,
-          name: profile.displayName,
-          avatar: profile.pictureUrl
+          name: profile.displayName || '無名氏',
+          avatar: profile.pictureUrl || ''
         };
         setCurrentUser(lineUser);
         setMyGroups(getSavedGroups());
@@ -135,11 +148,20 @@ export default function RoomieTaskApp() {
     initApp();
   }, []);
 
+  // 緊急重置功能：清除所有緩存
+  const hardReset = () => {
+    if(confirm("這將清除 App 的暫存資料（不會刪除群組），確定重置？")) {
+      localStorage.clear();
+      window.location.href = window.location.pathname; // 重整
+    }
+  };
+
   // ==========================================
   // 🚪 群組進出邏輯
   // ==========================================
 
   const enterGroup = (gId, user = currentUser) => {
+    if (!gId) return;
     setLoading(true);
     setGroupId(gId);
     
@@ -147,24 +169,36 @@ export default function RoomieTaskApp() {
     onValue(groupRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        setUsers(data.users ? Object.values(data.users) : []);
-        setTaskConfigs(data.taskConfigs ? Object.values(data.taskConfigs) : []);
-        
-        // 防呆處理：確保 tasks 存在且 date 不為 undefined
-        const tasksList = data.tasks ? Object.values(data.tasks) : [];
-        tasksList.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-        setCurrentCycleTasks(tasksList);
-        
-        const logsList = data.logs ? Object.values(data.logs) : [];
-        setLogs(logsList.sort((a, b) => b.id - a.id));
+        // 安全轉換數據
+        const safeUsers = data.users ? Object.values(data.users) : [];
+        const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs) : [];
+        const safeTasks = data.tasks ? Object.values(data.tasks) : [];
+        const safeLogs = data.logs ? Object.values(data.logs) : [];
+
+        // 排序任務，增加防呆 (防止 date 為 undefined 導致崩潰)
+        safeTasks.sort((a, b) => {
+          const dateA = a.date || '9999-99-99';
+          const dateB = b.date || '9999-99-99';
+          return dateA.localeCompare(dateB);
+        });
+
+        // 排序日誌
+        safeLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
+
+        setUsers(safeUsers);
+        setTaskConfigs(safeConfigs);
+        setCurrentCycleTasks(safeTasks);
+        setLogs(safeLogs);
 
         const gName = data.metadata?.name || '未命名空間';
         setGroupName(gName);
+        
+        // 只有在資料讀取成功後才存入 Local
         saveGroupToLocal(gId, gName);
         setMyGroups(getSavedGroups());
 
         // 自動加入
-        if (user && (!data.users || !data.users[user.id])) {
+        if (user && user.id && (!data.users || !data.users[user.id])) {
           registerNewMember(gId, user);
         }
         
@@ -185,6 +219,7 @@ export default function RoomieTaskApp() {
   };
 
   const handleCreateGroup = async () => {
+    if (!currentUser) return;
     setLoading(true);
     const newGid = generateGroupId();
     const groupRef = ref(db, `groups/${newGid}`);
@@ -194,17 +229,19 @@ export default function RoomieTaskApp() {
       metadata: { creator: currentUser.name, createdAt: serverTimestamp(), name: gName },
       users: { [currentUser.id]: { ...currentUser, balance: 0 } },
       taskConfigs: {},
-      tasks: {}, // 初始化空的 tasks 防止讀取錯誤
+      tasks: {},
       logs: { [Date.now()]: { id: Date.now(), msg: `🏠 空間已建立`, type: 'info', time: new Date().toLocaleTimeString() } }
     };
 
     await set(groupRef, initialData);
-    enterGroup(newGid, currentUser); // 確保傳入 currentUser
+    enterGroup(newGid, currentUser);
   };
 
   const handleQuitGroup = async () => {
     if(!window.confirm("確定要退出此群組嗎？")) return;
-    await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
+    if (currentUser && currentUser.id) {
+       await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
+    }
     removeGroupFromLocal(groupId);
     setMyGroups(getSavedGroups());
     handleSwitchGroup();
@@ -256,6 +293,7 @@ export default function RoomieTaskApp() {
   };
 
   const shareInvite = async () => {
+    // 這裡一定要用 LIFF 網址
     const inviteLink = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
     if (liff.isApiAvailable('shareTargetPicker')) {
       await liff.shareTargetPicker([{
@@ -279,7 +317,7 @@ export default function RoomieTaskApp() {
     setEditingConfigId(null);
     addLog(groupId, `🛠️ 更新了規則: ${configForm.name}`, 'info');
     
-    // 如果是新增規則，提示用戶是否要手動產生任務
+    // 如果是新增規則，詢問是否立即產生任務
     if (!editingConfigId && window.confirm("規則已儲存！是否要立即產生這個任務？")) {
        const taskId = `task-${configId}-${Date.now()}`;
        await update(ref(db), {
@@ -300,14 +338,13 @@ export default function RoomieTaskApp() {
   const openConfigEditor = (config = null) => {
     if (config) {
       setEditingConfigId(config.id);
-      // 安全解析頻率
       let freqNum = 7;
       if (config.freq && typeof config.freq === 'string') {
         const match = config.freq.match(/\d+/);
         if (match) freqNum = parseInt(match[0]);
       }
       setConfigForm({
-        name: config.name, price: config.price, freq: freqNum,
+        name: config.name || '', price: config.price || 0, freq: freqNum,
         icon: config.icon || '🧹', defaultAssigneeId: config.defaultAssigneeId || currentUser.id, nextDate: config.nextDate || getTodayString()
       });
     } else {
@@ -325,6 +362,10 @@ export default function RoomieTaskApp() {
     <div className="flex flex-col h-[100dvh] items-center justify-center bg-gray-50">
       <Loader2 className="animate-spin text-[#28C8C8] mb-4" size={48} />
       <p className="text-gray-500 font-medium">載入中...</p>
+      {/* 萬一卡住，提供這個重置按鈕 */}
+      <button onClick={hardReset} className="mt-8 text-xs text-gray-400 underline flex items-center gap-1">
+        <RefreshCw size={12}/> APP若卡住請點此重置
+      </button>
     </div>
   );
 
@@ -343,20 +384,24 @@ export default function RoomieTaskApp() {
             <p>你還沒加入任何群組</p>
           </div>
         ) : (
-          myGroups.map(g => (
-            <div key={g.id} onClick={() => enterGroup(g.id)} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-[#28C8C8] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-[#28C8C8]">
-                  <Home size={20}/>
+          myGroups.map(g => {
+            const lastVisitedDate = new Date(g.lastVisited);
+            const dateStr = isNaN(lastVisitedDate.getTime()) ? '未知時間' : lastVisitedDate.toLocaleDateString();
+            return (
+              <div key={g.id} onClick={() => enterGroup(g.id)} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-[#28C8C8] transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-[#28C8C8]">
+                    <Home size={20}/>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-800">{g.name}</h3>
+                    <p className="text-xs text-gray-400">上次訪問: {dateStr}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-gray-800">{g.name}</h3>
-                  <p className="text-xs text-gray-400">上次訪問: {new Date(g.lastVisited).toLocaleDateString()}</p>
-                </div>
+                <ChevronRight size={20} className="text-gray-300"/>
               </div>
-              <ChevronRight size={20} className="text-gray-300"/>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -433,7 +478,7 @@ export default function RoomieTaskApp() {
               <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><CalendarDays size={16}/> 日曆</button>
             </div>
 
-            {/* 清單模式 (還原 V1) */}
+            {/* 清單模式 */}
             {rosterViewMode === 'list' && (
               <>
                 {/* 我的待辦 */}
@@ -451,11 +496,11 @@ export default function RoomieTaskApp() {
                             {myTasks.map(task => (
                               <div key={task.id} className="p-4 flex items-center justify-between">
                                 <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-xl shrink-0">{task.icon}</div>
+                                  <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-xl shrink-0">{task.icon || '📝'}</div>
                                   <div>
                                     <h4 className="font-bold text-gray-800">{task.name}</h4>
                                     <div className="flex items-center gap-2 mt-1">
-                                      <span className={`text-xs px-1.5 rounded font-mono ${task.date === getTodayString() ? 'bg-red-100 text-red-500 font-bold' : 'bg-gray-100 text-gray-500'}`}>{task.date === getTodayString() ? '今天' : task.date}</span>
+                                      <span className={`text-xs px-1.5 rounded font-mono ${task.date === getTodayString() ? 'bg-red-100 text-red-500 font-bold' : 'bg-gray-100 text-gray-500'}`}>{task.date === getTodayString() ? '今天' : task.date || '無日期'}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -485,18 +530,20 @@ export default function RoomieTaskApp() {
                            const isMine = task.currentHolderId === currentUser?.id;
                            const isOpen = task.status === 'open';
                            const isDone = task.status === 'done';
+                           const assignee = users.find(u => u.id === task.currentHolderId);
+                           
                            return (
                              <div key={task.id} className={`p-4 flex items-center justify-between ${isOpen ? 'bg-red-50' : ''}`}>
                                <div className="flex items-center gap-4">
-                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 ${isDone ? 'bg-green-100 opacity-50' : 'bg-gray-100'}`}>{task.icon}</div>
+                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 ${isDone ? 'bg-green-100 opacity-50' : 'bg-gray-100'}`}>{task.icon || '📝'}</div>
                                  <div>
                                    <div className="flex items-center gap-2">
                                      <h4 className={`font-bold ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{task.name}</h4>
                                      {isOpen && <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold animate-pulse">釋出中</span>}
                                    </div>
                                    <div className="flex items-center gap-2 mt-1">
-                                     <span className="text-xs bg-gray-100 px-1.5 rounded text-gray-500 font-mono">{task.date}</span>
-                                     {!isDone && !isOpen && <span className={`text-xs ${isMine ? 'text-[#28C8C8] font-bold' : 'text-gray-500'}`}>{users.find(u => u.id === task.currentHolderId)?.name || '未知'}</span>}
+                                     <span className="text-xs bg-gray-100 px-1.5 rounded text-gray-500 font-mono">{task.date || '無日期'}</span>
+                                     {!isDone && !isOpen && <span className={`text-xs ${isMine ? 'text-[#28C8C8] font-bold' : 'text-gray-500'}`}>{assignee ? assignee.name : '未知'}</span>}
                                    </div>
                                  </div>
                                </div>
@@ -555,7 +602,7 @@ export default function RoomieTaskApp() {
                          return (
                            <div key={task.id} className="bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between">
                              <div className="flex items-center gap-3">
-                               <span className="text-2xl">{task.icon}</span>
+                               <span className="text-2xl">{task.icon || '📝'}</span>
                                <h5 className={`font-bold ${isDone ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.name}</h5>
                              </div>
                              {isDone ? <CheckCircle2 className="text-green-400" size={20}/> : <span className="text-xs text-gray-400">未完成</span>}
@@ -622,7 +669,7 @@ export default function RoomieTaskApp() {
                    taskConfigs.map(cfg => (
                      <div key={cfg.id} className="flex justify-between items-center p-2 hover:bg-gray-50 rounded">
                        <div className="flex items-center gap-3">
-                         <span className="text-xl">{cfg.icon}</span>
+                         <span className="text-xl">{cfg.icon || '📝'}</span>
                          <div><div className="font-bold text-sm text-gray-800">{cfg.name}</div><div className="text-xs text-gray-400">{cfg.freq} / ${cfg.price}</div></div>
                        </div>
                        <div className="flex gap-2">
