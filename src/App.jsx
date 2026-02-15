@@ -219,9 +219,13 @@ export default function RoomieTaskApp() {
     });
   };
 
-  // 邀請功能
+  // 邀請功能 (已修正：使用 LIFF URL 避免迴圈)
   const shareInvite = async () => {
-    const inviteLink = `${window.location.origin}${window.location.pathname}?g=${groupId}`;
+    // ❌ 原本錯誤的寫法 (會產生 Vercel 網址):
+    // const inviteLink = `${window.location.origin}${window.location.pathname}?g=${groupId}`;
+    
+    // ✅ 正確的寫法 (產生 LIFF 專屬網址):
+    const inviteLink = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
     
     if (liff.isApiAvailable('shareTargetPicker')) {
       try {
@@ -239,7 +243,6 @@ export default function RoomieTaskApp() {
       alert("連結已複製，請手動傳送給室友！");
     }
   };
-
   // 臨時功能：手動產生測試任務 (因為還沒寫排班 cron job)
   const generateTestTasks = async () => {
     const newTaskId = `task-${Date.now()}`;
