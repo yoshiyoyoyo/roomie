@@ -5,7 +5,7 @@ import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, get } 
 import { 
   Trash2, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
   ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, Plus, 
-  ArrowRight, AlertCircle, RefreshCw, RotateCcw
+  ArrowRight, AlertCircle, RotateCcw
 } from 'lucide-react';
 
 // ==========================================
@@ -64,10 +64,13 @@ export default function RoomieTaskApp() {
 
   // Modals
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [newNameInput, setNewNameInput] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
+  
   const [alertMsg, setAlertMsg] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [isRenamingGroup, setIsRenamingGroup] = useState(false);
 
   // Config Editor
   const [isEditingConfig, setIsEditingConfig] = useState(false);
@@ -103,6 +106,7 @@ export default function RoomieTaskApp() {
     setLoading(true);
     setGroupId(gId);
     
+    // 初次進入檢查排班
     const snapshot = await get(ref(db, `groups/${gId}`));
     if (snapshot.exists()) {
        await checkAndGenerateTasks(gId, snapshot.val()); 
@@ -132,6 +136,7 @@ export default function RoomieTaskApp() {
     });
   };
 
+  // 🔥 核心：自動排班引擎 (用於自動補充)
   const checkAndGenerateTasks = async (gId, data) => {
     if (!data.taskConfigs || !data.users) return;
     const updates = {};
@@ -172,52 +177,31 @@ export default function RoomieTaskApp() {
     if (hasUpdates) await update(ref(db), updates);
   };
 
-  // 資料同步：強制刪除某 Config 的所有未來任務
-  const clearFutureTasks = async (configId) => {
-    // 找出所有該 Config 且未完成的任務
-    const tasksToRemove = currentCycleTasks.filter(t => t.configId === configId && t.status !== 'done');
-    const updates = {};
-    tasksToRemove.forEach(t => {
-      updates[`groups/${groupId}/tasks/${t.id}`] = null;
-    });
-    if (Object.keys(updates).length > 0) {
-      await update(ref(db), updates);
-    }
-  };
-
   const registerMember = (gId, user) => {
     update(ref(db, `groups/${gId}/users/${user.id}`), { ...user, balance: 0, joinedAt: serverTimestamp() });
     const logId = Date.now();
     set(ref(db, `groups/${gId}/logs/${logId}`), { id: logId, msg: `${user.name} 加入了空間`, type: 'success', time: new Date().toLocaleTimeString() });
   };
 
-  // --- Header Operations ---
-  const updateGroupName = async () => {
-    const newName = prompt("請輸入新的空間名稱", groupName);
-    if (newName && newName.trim()) {
-      await update(ref(db, `groups/${groupId}/metadata`), { name: newName });
+  // --- Header Operations (Custom Modals) ---
+  
+  const handleRenameGroup = () => {
+    if (newNameInput.trim()) {
+      update(ref(db, `groups/${groupId}/metadata`), { name: newNameInput });
+      setShowRenameModal(false);
     }
   };
 
-  const forceRefresh = async () => {
-    if(!confirm("這將強制重新計算排班，確定執行？")) return;
-    setLoading(true);
-    const snap = await get(ref(db, `groups/${groupId}`));
-    await checkAndGenerateTasks(groupId, snap.val());
-    window.location.reload();
-  };
-
-  const resetGroup = async () => {
-    if(!confirm("⚠️ 警告：這將清空所有任務與日誌，並將所有人餘額歸零。確定重置？")) return;
+  const handleResetGroup = async () => {
     const updates = {};
     updates[`groups/${groupId}/tasks`] = null;
     updates[`groups/${groupId}/logs`] = null;
-    updates[`groups/${groupId}/taskConfigs`] = null; // 可選：是否要清設定？這裡先清空讓一切重來
+    // 重置所有人餘額
     users.forEach(u => updates[`groups/${groupId}/users/${u.id}/balance`] = 0);
     
     await update(ref(db), updates);
+    setShowResetModal(false);
     setAlertMsg("群組已重置");
-    window.location.reload();
   };
 
   const handleQuitGroup = async () => {
@@ -247,14 +231,13 @@ export default function RoomieTaskApp() {
     window.location.href = `https://liff.line.me/${LIFF_ID}?g=${gid}`;
   };
 
-  // --- 核心任務動作 (完工才扣款) ---
+  // --- 任務動作 ---
   
   const completeTask = async (task) => {
-    // 1. 標記完成
     const updates = {};
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'done';
 
-    // 2. 金流處理：如果有 originalHolderId，代表這是接單的任務，需轉帳
+    // 只有在完成時才轉帳 (解決呆帳問題)
     if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
         const originalUser = users.find(u => u.id === task.originalHolderId);
         const myUser = users.find(u => u.id === currentUser.id);
@@ -272,18 +255,16 @@ export default function RoomieTaskApp() {
             };
         }
     } else {
-        // 一般任務完成，不扣款，只留紀錄
         const logId = Date.now();
         updates[`groups/${groupId}/logs/${logId}`] = { 
             id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() 
         };
     }
-
     await update(ref(db), updates);
   };
   
   const releaseTask = async (task) => {
-    // 僅標記原負責人，不扣款
+    // 只釋出，不扣款
     update(ref(db, `groups/${groupId}/tasks/${task.id}`), { 
       status: 'open', 
       currentHolderId: null,
@@ -294,13 +275,14 @@ export default function RoomieTaskApp() {
   };
 
   const claimTask = async (task) => {
-    // 僅變更負責人，不轉帳
+    // 只接單，不轉帳
     update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
     set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
   };
 
-  // --- 設定 ---
+  // --- 設定相關 ---
+
   const toggleUserInOrder = (uid) => {
     const currentOrder = configForm.assigneeOrder || [];
     if (currentOrder.includes(uid)) {
@@ -310,6 +292,7 @@ export default function RoomieTaskApp() {
     }
   };
 
+  // 🔥 核心修正：儲存設定時，立即重算排班 (Atomic Reschedule)
   const saveConfig = async () => {
     if (!configForm.name.trim()) { setFormError("請輸入家事名稱"); return; }
     if (configForm.price <= 0 || configForm.freq <= 0) { setFormError("金額與頻率必須大於 0"); return; }
@@ -319,30 +302,68 @@ export default function RoomieTaskApp() {
     const id = editingConfigId || `cfg-${generateId()}`;
     const freqStr = typeof configForm.freq === 'string' ? configForm.freq : `每 ${configForm.freq} 天`;
     
-    // 🔥 關鍵同步：編輯或新增時，清除舊任務重排
-    await clearFutureTasks(id);
-
+    // 1. 準備設定資料
     const configData = { 
       ...configForm, 
       id, 
       freq: freqStr, 
-      nextAssigneeId: configForm.assigneeOrder[0] 
+      // 若是編輯，保留原本的 nextAssigneeId 避免跳過人；若是新增，則從第一位開始
+      nextAssigneeId: (!editingConfigId || !configForm.assigneeOrder.includes(configForm.defaultAssigneeId)) ? configForm.assigneeOrder[0] : configForm.defaultAssigneeId 
     };
+
+    const updates = {};
     
-    await update(ref(db), { [`groups/${groupId}/taskConfigs/${id}`]: configData });
+    // 2. 寫入設定
+    updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
+
+    // 3. 🔥 清除該設定產生的所有「尚未完成」任務 (重置未來)
+    const tasksToRemove = currentCycleTasks.filter(t => t.configId === id && t.status !== 'done');
+    tasksToRemove.forEach(t => updates[`groups/${groupId}/tasks/${t.id}`] = null);
+
+    // 4. 🔥 立即重新產生未來 45 天任務
+    let nextDate = configData.nextDate || getTodayString();
+    const limitDate = addDays(getTodayString(), 45);
+    const order = configData.assigneeOrder;
+    let runningAssigneeId = configData.nextAssigneeId;
+
+    while (nextDate <= limitDate) {
+      const tid = `task-${generateId()}-${Date.now()}`; // 確保 ID 不重複
+      
+      updates[`groups/${groupId}/tasks/${tid}`] = {
+        id: tid, configId: id, name: configData.name, price: configData.price, icon: configData.icon,
+        date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+      };
+
+      // 計算下一位
+      const currIdx = order.indexOf(runningAssigneeId);
+      const nextIdx = (currIdx + 1) % order.length;
+      runningAssigneeId = order[nextIdx];
+
+      // 計算下一時間
+      nextDate = addDays(nextDate, configForm.freq);
+    }
+
+    // 更新 Config 的狀態指標
+    updates[`groups/${groupId}/taskConfigs/${id}/nextDate`] = nextDate;
+    updates[`groups/${groupId}/taskConfigs/${id}/nextAssigneeId`] = runningAssigneeId;
+
+    // 5. 原子性寫入 (Atomic Update)
+    await update(ref(db), updates);
+    
     setIsEditingConfig(false);
-    
-    // 觸發重新排班
-    const snap = await get(ref(db, `groups/${groupId}`));
-    await checkAndGenerateTasks(groupId, snap.val());
-    setAlertMsg("設定已儲存，班表已同步更新！");
+    setAlertMsg("排班已更新！");
   };
 
   const deleteConfigConfirm = async () => {
     if (deleteTarget && deleteTarget.type === 'config') {
-       // 🔥 關鍵同步：刪除規則時，連帶刪除任務
-       await clearFutureTasks(deleteTarget.id);
-       await remove(ref(db, `groups/${groupId}/taskConfigs/${deleteTarget.id}`));
+       const tasksToRemove = currentCycleTasks.filter(t => t.configId === deleteTarget.id);
+       const updates = {};
+       // 1. 刪除所有相關任務
+       tasksToRemove.forEach(t => updates[`groups/${groupId}/tasks/${t.id}`] = null);
+       // 2. 刪除規則
+       updates[`groups/${groupId}/taskConfigs/${deleteTarget.id}`] = null;
+       
+       await update(ref(db), updates);
        setDeleteTarget(null);
     }
   };
@@ -384,9 +405,7 @@ export default function RoomieTaskApp() {
     setAlertMsg("結帳成功！");
   };
 
-  // 過濾器
   const limitDate = addDays(getTodayString(), 45);
-  // 只顯示 config 還存在的任務
   const validConfigIds = taskConfigs.map(c => c.id);
   const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' || t.date >= getTodayString()));
   const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
@@ -399,6 +418,7 @@ export default function RoomieTaskApp() {
       <div className="flex-1">
         <h1 className="text-3xl font-bold mb-2">👋 嗨，{currentUser?.name}</h1>
         <p className="text-gray-500 mb-8">歡迎回到家事交易所</p>
+        <h3 className="font-bold text-gray-800 mb-4 text-base">已加入的空間</h3>
         <div className="space-y-4">
           {myGroups.length === 0 ? (
             <div className="text-center py-10 text-gray-300 border-2 border-dashed rounded-2xl text-sm">還沒加入任何空間</div>
@@ -433,7 +453,7 @@ export default function RoomieTaskApp() {
       <header className="flex-none bg-white p-4 border-b flex justify-between items-center z-30">
         <div className="flex items-center gap-2">
           <h1 className="font-bold text-lg text-gray-800 truncate max-w-[150px]">{groupName}</h1>
-          <Edit2 size={16} className="text-gray-400 cursor-pointer" onClick={updateGroupName}/>
+          <Edit2 size={16} className="text-gray-400 cursor-pointer" onClick={() => { setNewNameInput(groupName); setShowRenameModal(true); }}/>
         </div>
         <div className="relative">
           <div onClick={(e) => { e.stopPropagation(); setIsUserMenuOpen(!isUserMenuOpen); }} className="flex items-center gap-2 bg-gray-100 p-1 pr-3 rounded-full cursor-pointer">
@@ -445,8 +465,7 @@ export default function RoomieTaskApp() {
               <div className="fixed inset-0 z-40" onClick={() => setIsUserMenuOpen(false)}></div>
               <div className="absolute right-0 mt-2 w-48 bg-white border rounded-xl shadow-xl z-50 overflow-hidden">
                  <button onClick={() => { setViewState('landing'); setGroupId(null); setIsUserMenuOpen(false); window.history.pushState({}, '', window.location.pathname); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><Home size={18}/> 我的空間</button>
-                 <button onClick={forceRefresh} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><RefreshCw size={18}/> 強制重整</button>
-                 <button onClick={resetGroup} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-red-400"><RotateCcw size={18}/> 重置群組</button>
+                 <button onClick={() => { setIsUserMenuOpen(false); setShowResetModal(true); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-red-400"><RotateCcw size={18}/> 重置群組</button>
                  <button onClick={handleQuitGroup} className="w-full text-left p-4 text-base text-red-500 flex items-center gap-3 hover:bg-gray-50 font-bold"><LogOut size={18}/> 退出群組</button>
               </div>
             </>
@@ -458,7 +477,7 @@ export default function RoomieTaskApp() {
         {view === 'roster' && (
           <div className="space-y-6">
             <section>
-              <div className="sticky top-0 bg-gray-50 z-10 py-2 flex justify-between items-center mb-2 backdrop-blur-sm bg-opacity-90" onClick={() => setIsMyTasksCollapsed(!isMyTasksCollapsed)}>
+              <div className="sticky top-0 bg-gray-50 z-10 py-2 flex justify-between items-center mb-2" onClick={() => setIsMyTasksCollapsed(!isMyTasksCollapsed)}>
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><CheckCircle2 size={20} className="text-[#28C8C8]"/> 近期待辦</h3>
                 {isMyTasksCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
               </div>
@@ -487,7 +506,7 @@ export default function RoomieTaskApp() {
             </section>
             
             <section>
-              <div className="sticky top-0 bg-gray-50 z-10 py-2 flex justify-between items-center mb-2 backdrop-blur-sm bg-opacity-90" onClick={() => setIsTaskListCollapsed(!isTaskListCollapsed)}>
+              <div className="sticky top-0 bg-gray-50 z-10 py-2 flex justify-between items-center mb-2" onClick={() => setIsTaskListCollapsed(!isTaskListCollapsed)}>
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Users size={20}/> 任務列表</h3>
                 {isTaskListCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
               </div>
@@ -632,9 +651,41 @@ export default function RoomieTaskApp() {
         ))}
       </nav>
 
+      {/* --- Modals --- */}
+
+      {/* Rename Modal */}
+      {showRenameModal && (
+        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
+             <h3 className="font-bold text-xl mb-4 text-gray-800">修改空間名稱</h3>
+             <input type="text" value={newNameInput} onChange={e => setNewNameInput(e.target.value)} className="w-full p-4 bg-gray-50 rounded-xl mb-6 text-center font-bold text-lg"/>
+             <div className="flex gap-3">
+               <button onClick={() => setShowRenameModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+               <button onClick={handleRenameGroup} className="flex-1 py-3 bg-[#28C8C8] text-white rounded-xl font-bold">確定</button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
+             <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
+             <h3 className="font-bold text-xl mb-2 text-gray-800">確定重置群組？</h3>
+             <p className="text-gray-500 mb-6 text-base">所有任務、日誌將被清空，成員餘額歸零。設定將被保留。</p>
+             <div className="flex gap-3">
+               <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+               <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">重置</button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
              <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-800">確定刪除？</h3>
              <p className="text-gray-500 mb-6 text-base">此動作將刪除規則及未來的待辦。</p>
@@ -646,9 +697,10 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
+      {/* Edit Config Modal */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5">
             <div className="flex justify-between items-center border-b pb-4">
               <h2 className="font-bold text-xl">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
               <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
@@ -698,9 +750,10 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
+      {/* Alert */}
       {alertMsg && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-6" onClick={() => setAlertMsg(null)}>
-          <div className="bg-white w-full max-w-xs rounded-3xl p-6 text-center">
+          <div className="bg-white w-full max-w-xs rounded-3xl p-6 animate-in zoom-in-95 text-center" onClick={e => e.stopPropagation()}>
             <div className="mb-4 text-[#28C8C8] flex justify-center"><CheckCircle2 size={40}/></div>
             <h3 className="font-bold text-gray-800 mb-6 text-lg">{alertMsg}</h3>
             <button onClick={() => setAlertMsg(null)} className="w-full py-3 bg-gray-100 rounded-xl font-bold text-gray-600">好</button>
