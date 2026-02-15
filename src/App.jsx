@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, get, set, serverTimestamp, update, onValue, remove } from "firebase/database";
 import { 
   Plus, Home, ChevronRight, Users, CheckCircle2, 
   Wallet, Settings, History, LogOut, Loader2, X, 
-  CalendarDays, List, ChevronLeft, Edit2, Trash2, Send
+  CalendarDays, List, ChevronLeft, Edit2, Trash2, Send, ChevronDown, User
 } from 'lucide-react';
 
 // --- 配置區 ---
@@ -29,22 +29,22 @@ const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
 
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [loadingStatus, setLoadingStatus] = useState('初始化中...');
   const [user, setUser] = useState(null);
   const [myGroups, setMyGroups] = useState([]);
   const [currentGroupId, setCurrentGroupId] = useState(null);
   const [groupData, setGroupData] = useState(null);
   
-  // UI 狀態
   const [view, setView] = useState('roster'); 
-  const [rosterMode, setRosterMode] = useState('list'); // list | calendar
+  const [rosterMode, setRosterMode] = useState('list');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef(null);
+
   // 日曆與編輯狀態
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [isEditingConfig, setIsEditingConfig] = useState(false);
-  const [editingConfig, setEditingConfig] = useState({ name: '', price: 30, freq: 7, icon: '🧹' });
+  const [editingConfig, setEditingConfig] = useState({ name: '', price: 50, freq: 7, icon: '🧹' });
 
   useEffect(() => {
     const loadLiffSDK = () => {
@@ -78,6 +78,15 @@ export default function App() {
       } catch (err) { setLoading(false); }
     };
     startApp();
+
+    // 點擊外部關閉選單
+    const handleClickOutside = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const loadGroup = async (gId, uId, uName, uAvatar) => {
@@ -119,11 +128,32 @@ export default function App() {
   };
 
   const handleShare = async () => {
+    if (!window.liff) return;
     const link = `https://liff.line.me/${LIFF_ID}?g=${currentGroupId}`;
     if (window.liff.isApiAvailable('shareTargetPicker')) {
-      await window.liff.shareTargetPicker([{
-        type: "text", text: `🏠 邀請你加入空間「${groupData.name}」！\n點擊連結加入：\n${link}`
-      }]);
+      try {
+        await window.liff.shareTargetPicker([{
+          type: "text",
+          text: `🏠 邀請你加入空間「${groupData.name}」！\n點擊連結加入：\n${link}`
+        }]);
+      } catch (error) {
+        console.error("分享取消或失敗");
+      }
+    } else {
+      // 降級方案：複製連結
+      navigator.clipboard.writeText(link);
+      alert("連結已複製，請手動傳送給室友");
+    }
+  };
+
+  const handleQuitGroup = async () => {
+    if (window.confirm("確定要退出此群組嗎？您的餘額紀錄將會保留，但您將從成員清單中消失。")) {
+      await remove(ref(db, `groups/${currentGroupId}/members/${user.id}`));
+      // 清除本地歷史
+      const history = JSON.parse(localStorage.getItem('roomie_history') || '[]');
+      const newHistory = history.filter(h => h.id !== currentGroupId);
+      localStorage.setItem('roomie_history', JSON.stringify(newHistory));
+      window.location.href = `https://liff.line.me/${LIFF_ID}`;
     }
   };
 
@@ -168,13 +198,41 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 max-w-md mx-auto flex flex-col pb-24 overflow-hidden">
-      <header className="p-4 bg-white border-b flex justify-between items-center sticky top-0 z-10">
-        <div className="flex items-center gap-2" onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}`}>
-          <ChevronLeft className="text-gray-400" size={24} />
+    <div className="min-h-screen bg-gray-50 max-w-md mx-auto flex flex-col pb-24 overflow-hidden relative">
+      <header className="p-4 bg-white border-b flex justify-between items-center sticky top-0 z-30">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-cyan-50 rounded-lg flex items-center justify-center text-cyan-500"><Home size={18}/></div>
           <h2 className="font-bold text-gray-800 truncate max-w-[180px]">{groupData?.name}</h2>
         </div>
-        <img src={user?.avatar} className="w-8 h-8 rounded-full border shadow-sm" alt="me" />
+        
+        {/* 右上角頭像與下拉選單 */}
+        <div className="relative" ref={userMenuRef}>
+          <div 
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+          >
+            <img src={user?.avatar} className="w-8 h-8 rounded-full border shadow-sm" alt="me" />
+            <ChevronDown size={14} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+          </div>
+          
+          {showUserMenu && (
+            <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50 animate-in fade-in slide-in-from-top-2">
+              <button 
+                onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}`}
+                className="w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <List size={16} className="text-cyan-500"/> 我的群組
+              </button>
+              <div className="border-t border-gray-50 my-1"></div>
+              <button 
+                onClick={handleQuitGroup}
+                className="w-full px-4 py-3 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
+              >
+                <LogOut size={16}/> 退出此群組
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       <main className="p-4 flex-1">
@@ -213,7 +271,7 @@ export default function App() {
 
         {view === 'wallet' && (
           <div className="space-y-4">
-            <div className="bg-cyan-500 p-8 rounded-[40px] text-white shadow-xl shadow-cyan-100">
+            <div className="bg-cyan-500 p-8 rounded-[40px] text-white shadow-xl shadow-cyan-100 relative overflow-hidden">
               <p className="opacity-70 text-sm font-bold mb-1">我的結餘</p>
               <h1 className="text-5xl font-bold font-mono">NT$ {groupData?.members?.[user.id]?.balance || 0}</h1>
             </div>
@@ -247,7 +305,7 @@ export default function App() {
             <div className="bg-white p-6 rounded-3xl border shadow-sm space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-gray-800">成員名單 ({Object.keys(groupData?.members || {}).length})</h3>
-                <button onClick={handleShare} className="bg-cyan-500 text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1"><Send size={12}/> 邀請室友</button>
+                <button onClick={handleShare} className="bg-cyan-500 text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1 active:scale-95"><Send size={12}/> 邀請室友</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {groupData?.members && Object.values(groupData.members).map(m => (
@@ -268,36 +326,58 @@ export default function App() {
                 {groupData?.configs ? Object.values(groupData.configs).map(cfg => (
                   <div key={cfg.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-2xl border border-gray-100">
                     <div className="flex items-center gap-3"><span className="text-2xl">{cfg.icon}</span><div><p className="font-bold text-sm">{cfg.name}</p><p className="text-[10px] text-gray-400">每 {cfg.freq} 天 / ${cfg.price}</p></div></div>
-                    <Trash2 size={16} className="text-gray-300" onClick={() => remove(ref(db, `groups/${currentGroupId}/configs/${cfg.id}`))} />
+                    <Trash2 size={16} className="text-gray-300 cursor-pointer" onClick={() => remove(ref(db, `groups/${currentGroupId}/configs/${cfg.id}`))} />
                   </div>
                 )) : <p className="text-center py-4 text-gray-300 text-xs italic">尚未設定任何規則</p>}
               </div>
             </div>
-
-            <button onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}`} className="w-full py-4 bg-red-50 text-red-500 rounded-2xl font-bold flex items-center justify-center gap-2 border border-red-100"><LogOut size={18}/> 退出並切換空間</button>
           </div>
         )}
       </main>
 
-      {/* 新增規則彈窗 */}
+      {/* 新增家事規則彈窗 */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-md rounded-[32px] p-8 space-y-6">
-            <h3 className="font-bold text-xl">新增家事規則</h3>
-            <div className="space-y-4">
-              <input type="text" placeholder="規則名稱 (例如：倒垃圾)" onChange={e => setEditingConfig({...editingConfig, name: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl border-none" />
-              <div className="flex gap-2">
-                <input type="text" placeholder="圖示" className="w-20 p-4 bg-gray-50 rounded-2xl text-center" onChange={e => setEditingConfig({...editingConfig, icon: e.target.value})} />
-                <input type="number" placeholder="賞金" className="flex-1 p-4 bg-gray-50 rounded-2xl" onChange={e => setEditingConfig({...editingConfig, price: Number(e.target.value)})} />
-              </div>
-              <div className="flex items-center gap-2 text-sm px-2">每 <input type="number" defaultValue="7" className="w-16 p-2 bg-gray-50 rounded-lg text-center font-bold" onChange={e => setEditingConfig({...editingConfig, freq: Number(e.target.value)})} /> 天一次</div>
+          <div className="bg-white w-full max-w-md rounded-[32px] p-8 space-y-6 animate-in zoom-in duration-200">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-xl text-gray-800">新增家事規則</h3>
+              <X onClick={() => setIsEditingConfig(false)} className="text-gray-400 cursor-pointer" />
             </div>
+            
+            <div className="space-y-5">
+              <div>
+                <label className="text-xs font-bold text-gray-400 ml-1 mb-1 block">家事名稱</label>
+                <input type="text" placeholder="例如：倒垃圾" value={editingConfig.name} onChange={e => setEditingConfig({...editingConfig, name: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-cyan-500" />
+              </div>
+              
+              <div className="flex gap-4">
+                <div className="w-24">
+                  <label className="text-xs font-bold text-gray-400 ml-1 mb-1 block">圖示</label>
+                  <input type="text" placeholder="🧹" value={editingConfig.icon} onChange={e => setEditingConfig({...editingConfig, icon: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl text-center text-xl border-none focus:ring-2 focus:ring-cyan-500" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs font-bold text-gray-400 ml-1 mb-1 block">賞金 (NT$)</label>
+                  <input type="number" placeholder="50" defaultValue="50" onChange={e => setEditingConfig({...editingConfig, price: Number(e.target.value) || 50})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none focus:ring-2 focus:ring-cyan-500" />
+                </div>
+              </div>
+              
+              <div>
+                <label className="text-xs font-bold text-gray-400 ml-1 mb-1 block">頻率 (天)</label>
+                <div className="flex items-center gap-3 bg-gray-50 p-4 rounded-2xl">
+                  <span className="text-sm text-gray-500">每</span>
+                  <input type="number" defaultValue="7" className="w-16 bg-white p-2 rounded-lg text-center font-bold text-cyan-600 shadow-sm border-none focus:ring-1 focus:ring-cyan-500" onChange={e => setEditingConfig({...editingConfig, freq: Number(e.target.value) || 7})} />
+                  <span className="text-sm text-gray-500">天一次</span>
+                </div>
+              </div>
+            </div>
+            
             <button onClick={async () => {
+              if (!editingConfig.name) return alert("請輸入家事名稱");
               const id = `cfg-${Date.now()}`;
               await update(ref(db, `groups/${currentGroupId}/configs/${id}`), { ...editingConfig, id });
               setIsEditingConfig(false);
-            }} className="w-full py-4 bg-cyan-500 text-white rounded-2xl font-bold">儲存規則</button>
-            <button onClick={() => setIsEditingConfig(false)} className="w-full text-gray-400 text-sm">取消</button>
+              setEditingConfig({ name: '', price: 50, freq: 7, icon: '🧹' }); // 重置
+            }} className="w-full py-4 bg-cyan-500 text-white rounded-2xl font-bold text-lg shadow-lg shadow-cyan-100 active:scale-95 transition-all">儲存規則</button>
           </div>
         </div>
       )}
