@@ -4,13 +4,9 @@ import {
   DollarSign, Plus, ArrowRight, UserCircle2, MoreVertical, History, 
   MessageCircle, Settings, Edit2, Save, X, Play, CalendarDays, 
   AlertTriangle, UserPlus, Palette, List, ChevronLeft, ChevronRight, 
-  User, Calendar, ChevronDown, ChevronUp, ClipboardList, Check, Loader2
+  User, Calendar, ChevronDown, ChevronUp, ClipboardList, Check, Loader2,
+  Wifi, WifiOff
 } from 'lucide-react';
-
-// --- 第三方套件引入 ---
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot, updateDoc } from "firebase/firestore";
-import liff from "@line/liff";
 
 // ==========================================
 // ⚙️ 系統設定區 (System Config)
@@ -18,16 +14,20 @@ import liff from "@line/liff";
 
 const ENABLE_FIREBASE = true; 
 
-const LIFF_ID = "YOUR_LIFF_ID_HERE"; // 請填入您的 LIFF ID
+// ⚠️⚠️⚠️ 請在此填入您的真實資料 ⚠️⚠️⚠️
+const LIFF_ID = "2009134573-7SuphV8b"; 
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
+  authDomain: "roomie-task.firebaseapp.com",
+  projectId: "roomie-task",
+  storageBucket: "roomie-task.firebasestorage.app",
+  messagingSenderId: "233849609695",
+  appId: "1:233849609695:web:0c76a4b9b40070cf22386a"
 };
+
+// 檢查是否為範例設定 (用於防呆提示)
+const isConfigConfigured = firebaseConfig.apiKey !== "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4";
 
 // ==========================================
 // 🛠️ 資料庫與工具初始化
@@ -35,7 +35,7 @@ const firebaseConfig = {
 
 // 初始化 Firebase
 let db;
-if (ENABLE_FIREBASE) {
+if (ENABLE_FIREBASE && isConfigConfigured) {
   try {
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
@@ -107,11 +107,13 @@ export default function RoomieTaskApp() {
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
   const [calendarMonth, setCalendarMonth] = useState(new Date()); 
   
+  // Lists UI
   const [visibleMyTasksCount, setVisibleMyTasksCount] = useState(3);
   const [visibleAllTasksCount, setVisibleAllTasksCount] = useState(3);
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
   const [isTaskListOpen, setIsTaskListOpen] = useState(true);
 
+  // Forms & Modals
   const [isEditingTask, setIsEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({ name: '', price: '', freq: '每 7 天', icon: '🧹', defaultAssigneeId: '', nextDate: getTodayString() });
   const [customDays, setCustomDays] = useState(7);
@@ -124,6 +126,17 @@ export default function RoomieTaskApp() {
   // ==========================================
 
   useEffect(() => {
+    // 設置一個 3 秒的 Timeout，避免因連線問題導致畫面一直卡在 Loading
+    const timeoutId = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          console.warn("連線逾時，切換至離線模式");
+          return false;
+        }
+        return prev;
+      });
+    }, 3000);
+
     const initApp = async () => {
       try {
         let currentRoomId = "demo-room";
@@ -150,7 +163,7 @@ export default function RoomieTaskApp() {
         setRoomId(currentRoomId);
 
         // 2. 連接 Firebase
-        if (ENABLE_FIREBASE && db) {
+        if (ENABLE_FIREBASE && db && isConfigConfigured) {
            const roomRef = doc(db, "rooms", currentRoomId);
            const unsubscribe = onSnapshot(roomRef, (docSnap) => {
              if (docSnap.exists()) {
@@ -158,9 +171,10 @@ export default function RoomieTaskApp() {
                setData(remoteData);
                setIsConnected(true);
              } else {
+               // 新房間：寫入預設資料
                setDoc(roomRef, DEFAULT_DATA)
                 .then(() => setIsConnected(true))
-                .catch(e => alert("無法建立資料庫，請檢查 Firebase 規則：" + e.message));
+                .catch(e => console.error("Create DB Error:", e));
              }
              setLoading(false);
            }, (error) => {
@@ -170,7 +184,11 @@ export default function RoomieTaskApp() {
            });
            return () => unsubscribe();
         } else {
-          setLoading(false);
+           // 離線/Demo 模式
+           if (currentCycleTasks.length === 0) {
+             dispatchTasksFromConfig(false);
+           }
+           setLoading(false);
         }
 
       } catch (err) {
@@ -180,7 +198,15 @@ export default function RoomieTaskApp() {
     };
 
     initApp();
+    return () => clearTimeout(timeoutId);
   }, []);
+
+  // 確保 currentUser 有效
+  useEffect(() => {
+    if (users.length > 0 && (!currentUser || !users.find(u => u.id === currentUser.id))) {
+      setCurrentUser(users[0]);
+    }
+  }, [users]);
 
   // ==========================================
   // 💾 資料庫操作封裝
@@ -189,13 +215,16 @@ export default function RoomieTaskApp() {
   const updateDB = async (newData) => {
     setData(newData); // Optimistic Update
 
-    if (ENABLE_FIREBASE && db && roomId) {
+    if (ENABLE_FIREBASE && db && roomId && isConfigConfigured) {
       try {
         const roomRef = doc(db, "rooms", roomId);
         await updateDoc(roomRef, newData);
       } catch (e) {
         console.error("Sync Error:", e);
+        // 如果需要，可以在這裡加入 toast 提示
       }
+    } else if (!isConfigConfigured) {
+      console.warn("尚未設定 Firebase Config，資料僅暫存在本地");
     }
   };
 
@@ -211,7 +240,7 @@ export default function RoomieTaskApp() {
     else if (type === 'COMPLETE') text = `✅ 任務完成\n\n${payload.user} 已完成「${payload.task}」`;
     else if (type === 'SETTLE') text = `💸 帳務結清\n\n${payload.from} 已支付 $${payload.amount} 給 ${payload.to}`;
 
-    if (typeof liff !== 'undefined' && liff.isInClient() && text) {
+    if (typeof liff !== 'undefined' && liff?.isInClient && liff.isInClient() && text) {
       try { await liff.sendMessages([{ type: 'text', text }]); } 
       catch (err) { console.error('LIFF Send Error:', err); }
     }
@@ -486,28 +515,29 @@ export default function RoomieTaskApp() {
           <div><h1 className="font-bold text-gray-800 text-lg leading-tight">家事值日生</h1></div>
         </div>
         
-        <div className="flex items-center gap-2 bg-gray-100 rounded-full px-2 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
+        <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500 font-medium">我是</span>
-          {currentUser && (
-            <>
-              <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border border-gray-200`}></div>
-              <div className="relative">
+          <div className="flex items-center gap-2 bg-gray-100 rounded-full px-2 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
+            {currentUser && (
+              <>
+                <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border border-gray-200`}></div>
                 <select 
-                  className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-1 cursor-pointer"
+                  className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-4 cursor-pointer z-10 relative"
                   value={currentUser.id}
                   onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
                   style={{ textAlignLast: 'center' }} 
                 >
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
-              </div>
-            </>
-          )}
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400"><ChevronDown size={12} /></div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 w-full relative">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 w-full relative [scrollbar-gutter:stable]">
 
         {/* VIEW: ROSTER */}
         {view === 'roster' && (
@@ -631,10 +661,9 @@ export default function RoomieTaskApp() {
                   </div>
                   <div className="grid grid-cols-7 text-center mb-2">{['日', '一', '二', '三', '四', '五', '六'].map(d => <span key={d} className="text-xs font-bold text-gray-400">{d}</span>)}</div>
                   <div className="grid grid-cols-7 gap-1">
-                    {Array.from({ length: getDaysInMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) + getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) }).map((_, i) => {
-                      const firstDay = getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth());
-                      if (i < firstDay) return <div key={`empty-${i}`} className="aspect-square"></div>;
-                      const day = i - firstDay + 1;
+                    {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() }).map((_, i) => <div key={`empty-${i}`} className="aspect-square"></div>)}
+                    {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }).map((_, i) => {
+                      const day = i + 1;
                       const dateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                       const isSelected = dateStr === calendarSelectedDate;
                       const isToday = dateStr === getTodayString();
@@ -790,7 +819,6 @@ export default function RoomieTaskApp() {
               <h2 className="font-bold text-xl text-gray-800">{isEditingTask ? '編輯規則' : '新增規則'}</h2>
               <button onClick={closeEditor} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"><X size={20} /></button>
             </div>
-            
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">名稱與圖示</label>
@@ -799,13 +827,11 @@ export default function RoomieTaskApp() {
                   <input type="text" placeholder="例如：倒垃圾" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="flex-1 px-4 border border-gray-300 rounded-lg outline-none focus:border-[#28C8C8]" />
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2"><Calendar size={16} /> 下次執行日</label>
                 <input type="date" value={editForm.nextDate} onChange={e => setEditForm({...editForm, nextDate: e.target.value})} className="w-full px-4 py-3 border border-gray-300 rounded-lg outline-none focus:border-[#28C8C8] bg-white" />
                 <p className="text-xs text-gray-400 mt-1">請指定這個任務「下一次」應該在哪一天執行。</p>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2"><User size={16} /> 誰先開始</label>
                 <div className="relative">
@@ -816,7 +842,6 @@ export default function RoomieTaskApp() {
                 </div>
                 <p className="text-xs text-gray-400 mt-1">選定後，系統排班將從這位室友開始輪替。</p>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">代班價格 (NT$)</label>
                 <div className="relative">
@@ -824,7 +849,6 @@ export default function RoomieTaskApp() {
                   <div className="absolute right-4 top-3.5 text-gray-400 text-sm pointer-events-none">元</div>
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">重複頻率</label>
                 <div className="flex items-center gap-3 p-2">
@@ -834,7 +858,6 @@ export default function RoomieTaskApp() {
                 </div>
               </div>
             </div>
-
             <div className="p-6 border-t border-gray-100 bg-white">
                <button onClick={saveTaskConfig} disabled={!isFormValid} className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${isFormValid ? 'bg-[#28C8C8] text-white shadow-[#28C8C8]/40 hover:bg-[#20a0a0] active:scale-[0.98]' : 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none'}`}><Save size={20} /> 儲存設定</button>
             </div>
