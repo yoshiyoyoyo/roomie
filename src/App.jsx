@@ -37,14 +37,11 @@ const getSavedGroups = () => {
   try { return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); } catch (e) { return []; }
 };
 
-// 擴充 Emoji 列表
+// 擴充 Emoji 列表 (可供選擇)
 const EMOJI_LIST = [
   "🧹", "🗑️", "🍽️", "🧺", "🚽", "🍳", "🛒", "📦", "✨", "🐶", 
   "🐱", "🪴", "🚿", "🧽", "🧼", "🪣", "🪟", "🔧", "💡", "🛋️",
-  "🛏️", "🧴", "🧻", "📅", "💰", "🧾", "📝", "📢", "🚗", "🚲",
-  "🍱", "🥗", "🥘", "🍕", "🍔", "🍺", "🍷", "☕", "🍼", "💊",
-  "🎮", "📺", "💻", "📱", "🔋", "🔌", "🔨", "🪛", "✂️", "📌",
-  "🔑", "🚪", "🏠", "📫", "📦", "👟", "👕", "👖", "👓", "🧢"
+  "🛏️", "🧴", "🧻", "📅", "💰", "🧾", "📝", "📢", "🚗", "🚲"
 ];
 
 export default function RoomieTaskApp() {
@@ -119,7 +116,7 @@ export default function RoomieTaskApp() {
     setLoading(true);
     setGroupId(gId);
     
-    // 初次進入檢查排班
+    // 初次進入觸發檢查
     const snapshot = await get(ref(db, `groups/${gId}`));
     if (snapshot.exists()) {
        await checkAndGenerateTasks(gId, snapshot.val()); 
@@ -151,7 +148,7 @@ export default function RoomieTaskApp() {
     });
   };
 
-  // 🔥 核心：排班引擎 (Fix: 確保 nextDate 重置)
+  // 🔥 核心：自動補班 (僅用於補足未來空缺)
   const checkAndGenerateTasks = async (gId, data) => {
     if (!data.taskConfigs || !data.users) return;
     const updates = {};
@@ -169,25 +166,20 @@ export default function RoomieTaskApp() {
       let runningAssigneeId = cfg.nextAssigneeId;
       if (!runningAssigneeId || !order.includes(runningAssigneeId)) runningAssigneeId = order[0];
 
-      // 防止無窮迴圈的保險機制
-      let loopCount = 0;
-      while (nextDate <= limitDate && loopCount < 100) {
-        loopCount++;
-        const tid = `task-${cfg.id}-${nextDate.replace(/-/g, '')}`; // 使用日期作為 ID 一部分避免重複
-        
-        // 只有當該日期還沒有任務時才寫入 (避免覆蓋)
-        if (!data.tasks || !data.tasks[tid]) {
-            updates[`groups/${gId}/tasks/${tid}`] = {
-              id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
-              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
-            };
-        }
+      while (nextDate <= limitDate) {
+        const tid = `task-${generateId()}-${Date.now()}`;
+        const freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq;
+
+        updates[`groups/${gId}/tasks/${tid}`] = {
+          id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
+          date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+        };
 
         const currIdx = order.indexOf(runningAssigneeId);
         const nextIdx = (currIdx + 1) % order.length;
         runningAssigneeId = order[nextIdx];
 
-        nextDate = addDays(nextDate, typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq);
+        nextDate = addDays(nextDate, freqNum);
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
         hasUpdates = true;
@@ -195,17 +187,6 @@ export default function RoomieTaskApp() {
     });
 
     if (hasUpdates) await update(ref(db), updates);
-  };
-
-  const clearFutureTasks = async (configId) => {
-    const tasksToRemove = currentCycleTasks.filter(t => t.configId === configId && t.status !== 'done');
-    const updates = {};
-    tasksToRemove.forEach(t => {
-      updates[`groups/${groupId}/tasks/${t.id}`] = null;
-    });
-    if (Object.keys(updates).length > 0) {
-      await update(ref(db), updates);
-    }
   };
 
   const registerMember = (gId, user) => {
@@ -222,14 +203,17 @@ export default function RoomieTaskApp() {
     }
   };
 
+  // 🔴 修正：重置群組 (清空 Config + Task + Log)
   const handleResetGroup = async () => {
     const updates = {};
     updates[`groups/${groupId}/tasks`] = null;
     updates[`groups/${groupId}/logs`] = null;
+    updates[`groups/${groupId}/taskConfigs`] = null; // 連家事規則一起清空
     users.forEach(u => updates[`groups/${groupId}/users/${u.id}/balance`] = 0);
+    
     await update(ref(db), updates);
     setShowResetModal(false);
-    setAlertMsg("群組已重置");
+    setAlertMsg("群組已完全重置 (包含規則)");
   };
 
   const handleQuitGroupConfirm = async () => {
@@ -276,6 +260,7 @@ export default function RoomieTaskApp() {
         if (originalUser && myUser) {
             updates[`groups/${groupId}/users/${task.originalHolderId}/balance`] = originalUser.balance - (task.price || 0);
             updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myUser.balance + (task.price || 0);
+            
             const logId = Date.now();
             updates[`groups/${groupId}/logs/${logId}`] = { 
                 id: logId, 
@@ -307,7 +292,7 @@ export default function RoomieTaskApp() {
     set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
   };
 
-  // --- 設定 ---
+  // --- 設定相關 ---
   const toggleUserInOrder = (uid) => {
     const currentOrder = configForm.assigneeOrder || [];
     if (currentOrder.includes(uid)) {
@@ -317,49 +302,97 @@ export default function RoomieTaskApp() {
     }
   };
 
-  // 🔥 核心：Atomic Reschedule (解決值日表不更新問題)
+  // 🔥 核心修復：Atomic Save & Reschedule
   const saveConfig = async () => {
     if (!configForm.name.trim()) { setFormError("請輸入家事名稱"); return; }
     if (configForm.price <= 0 || configForm.freq <= 0) { setFormError("金額與頻率必須大於 0"); return; }
     
     let assigneeOrder = configForm.assigneeOrder;
     if (!assigneeOrder || assigneeOrder.length === 0) {
-      assigneeOrder = users.map(u => u.id);
+      assigneeOrder = users.map(u => u.id); // Default to all users
     }
     setFormError('');
 
     const id = editingConfigId || `cfg-${generateId()}`;
     const freqStr = typeof configForm.freq === 'string' ? configForm.freq : `每 ${configForm.freq} 天`;
     
-    // 1. 清除舊任務
-    await clearFutureTasks(id);
+    // 準備 DB 更新包
+    const updates = {};
 
-    // 2. 準備新資料，並強制重置 nextDate 為用戶選的開始日期
+    // 1. 寫入新 Config
+    // 注意：如果是編輯，強制重置 nextAssigneeId 為序列第一位 (或你可以選擇保留)，這裡為了同步排班，建議重置或精確計算
     const configData = { 
       ...configForm, 
       id, 
       freq: freqStr, 
       assigneeOrder, 
       nextAssigneeId: assigneeOrder[0],
-      nextDate: configForm.nextDate // 🔥 關鍵：重置下次執行日，讓產生器重新跑
+      nextDate: configForm.nextDate // 強制重置下次執行日
     };
+    updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
+
+    // 2. 獲取當前所有任務 (為了刪除舊的)
+    // 我們需要 snapshot 才能確保刪除乾淨，不能只依賴前端 state
+    const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
+    if (tasksSnap.exists()) {
+        const allTasks = tasksSnap.val();
+        Object.values(allTasks).forEach(t => {
+            // 如果是編輯模式，且是這個 Config 產生的，且還沒完成 -> 刪除
+            // 如果是新增模式，通常沒有舊任務，但檢查無妨
+            if (t.configId === id && t.status !== 'done') {
+                updates[`groups/${groupId}/tasks/${t.id}`] = null;
+            }
+        });
+    }
+
+    // 3. 立即產生新的未來 45 天任務
+    let nextDate = configData.nextDate;
+    const limitDate = addDays(getTodayString(), 45);
+    let runningAssigneeId = configData.nextAssigneeId;
+
+    while (nextDate <= limitDate) {
+        const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
+        
+        updates[`groups/${groupId}/tasks/${tid}`] = {
+            id: tid, configId: id, name: configData.name, price: configData.price, icon: configData.icon,
+            date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+        };
+
+        const currIdx = assigneeOrder.indexOf(runningAssigneeId);
+        const nextIdx = (currIdx + 1) % assigneeOrder.length;
+        runningAssigneeId = assigneeOrder[nextIdx];
+
+        nextDate = addDays(nextDate, configForm.freq);
+    }
+
+    // 更新 Config 的指標狀態
+    updates[`groups/${groupId}/taskConfigs/${id}/nextDate`] = nextDate;
+    updates[`groups/${groupId}/taskConfigs/${id}/nextAssigneeId`] = runningAssigneeId;
+
+    // 4. 原子性提交所有變更
+    await update(ref(db), updates);
     
-    // 3. 寫入設定
-    await update(ref(db), { [`groups/${groupId}/taskConfigs/${id}`]: configData });
     setIsEditingConfig(false);
-    
-    // 4. 立即觸發產生器
-    // 為了確保讀到最新 config，我們手動傳入更新後的數據結構 (模擬 snapshot)
-    const freshSnap = await get(ref(db, `groups/${groupId}`));
-    await checkAndGenerateTasks(groupId, freshSnap.val());
-    
-    setAlertMsg("排班已完全重整！");
+    setAlertMsg("家事設定已更新，排班表已重整！");
   };
 
   const deleteConfigConfirm = async () => {
     if (deleteTarget && deleteTarget.type === 'config') {
-       await clearFutureTasks(deleteTarget.id);
-       await remove(ref(db, `groups/${groupId}/taskConfigs/${deleteTarget.id}`));
+       // 同樣需要先讀取再刪除，確保乾淨
+       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
+       const updates = {};
+       
+       if (tasksSnap.exists()) {
+           const allTasks = tasksSnap.val();
+           Object.values(allTasks).forEach(t => {
+               if (t.configId === deleteTarget.id) {
+                   updates[`groups/${groupId}/tasks/${t.id}`] = null;
+               }
+           });
+       }
+       updates[`groups/${groupId}/taskConfigs/${deleteTarget.id}`] = null;
+       
+       await update(ref(db), updates);
        setDeleteTarget(null);
     }
   };
@@ -487,7 +520,7 @@ export default function RoomieTaskApp() {
                         </div>
                         <div className="flex gap-2">
                           <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-bold">沒空</button>
-                          <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-lg text-sm font-bold ${task.date > getTodayString() ? 'bg-gray-300' : 'bg-[#28C8C8]'}`}>完成</button>
+                          <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-lg text-sm font-bold ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#28C8C8]'}`}>完成</button>
                         </div>
                       </div>
                     ))
@@ -520,7 +553,7 @@ export default function RoomieTaskApp() {
                               <div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div>
                             </div>
                           </div>
-                          {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold">接單 +${task.price}</button>}
+                          {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold">接單</button>}
                           {isDone && <CheckCircle2 className="text-green-300" size={24}/>}
                         </div>
                       )
@@ -676,15 +709,16 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Reset Modal (Black Style) */}
+      {/* Reset Modal (Modified Style & Logic) */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
+             <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-900">確定重置群組？</h3>
-             <p className="text-gray-600 mb-6 text-base">所有任務與日誌將被清空，成員餘額歸零。</p>
+             <p className="text-gray-600 mb-6 text-base">這將清空所有任務、日誌與家事規則，並將所有人餘額歸零。</p>
              <div className="flex gap-3">
                <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
-               <button onClick={handleResetGroup} className="flex-1 py-3 bg-black text-white rounded-xl font-bold">重置</button>
+               <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">重置</button>
              </div>
           </div>
         </div>
@@ -715,11 +749,11 @@ export default function RoomieTaskApp() {
             </div>
             
             <div className="flex gap-4 relative">
-              <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-20 p-4 bg-gray-50 rounded-2xl text-center text-3xl cursor-pointer hover:bg-gray-100 h-14 flex items-center justify-center">{configForm.icon}</div>
+              <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-20 p-4 bg-gray-50 rounded-2xl text-center text-3xl cursor-pointer hover:bg-gray-100 h-14 flex items-center justify-center border border-gray-100">{configForm.icon}</div>
               <input type="text" placeholder="名稱 (如：倒垃圾)" value={configForm.name} onChange={e => setConfigForm({...configForm, name:e.target.value})} className="flex-1 p-4 bg-gray-50 rounded-2xl text-lg font-bold outline-none focus:ring-2 focus:ring-[#28C8C8] h-14"/>
               
               {showEmojiPicker && (
-                <div className="absolute top-16 left-0 bg-white shadow-xl rounded-2xl border p-4 grid grid-cols-6 gap-2 w-full z-50 h-48 overflow-y-auto">
+                <div className="absolute top-16 left-0 bg-white shadow-2xl rounded-2xl border p-4 grid grid-cols-6 gap-2 w-full z-50 h-64 overflow-y-auto">
                   {EMOJI_LIST.map(e => <button key={e} onClick={() => { setConfigForm({...configForm, icon:e}); setShowEmojiPicker(false); }} className="text-2xl hover:bg-gray-100 p-2 rounded-lg">{e}</button>)}
                 </div>
               )}
