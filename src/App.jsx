@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import liff from '@line/liff';
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set, update, serverTimestamp, remove } from "firebase/database";
+import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, get } from "firebase/database";
 import { 
   Trash2, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
-  CalendarDays, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, Plus, 
-  Calendar, ChevronLeft, ChevronRight, AlertCircle, ArrowRightCircle
+  ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, Plus, 
+  ArrowRight, ArrowRightCircle, Sparkles
 } from 'lucide-react';
 
 // ==========================================
@@ -37,10 +37,6 @@ const getSavedGroups = () => {
   try { return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); } catch (e) { return []; }
 };
 
-// 日曆工具
-const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
-const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay(); 
-
 export default function RoomieTaskApp() {
   const [loading, setLoading] = useState(true);
   const [viewState, setViewState] = useState('landing'); 
@@ -58,26 +54,19 @@ export default function RoomieTaskApp() {
 
   // UI Views
   const [view, setView] = useState('roster');
-  const [rosterViewMode, setRosterViewMode] = useState('list');
   
   // 顯示更多控制
   const [showAllMyTasks, setShowAllMyTasks] = useState(false);
   const [showAllTaskList, setShowAllTaskList] = useState(false);
   const TASKS_LIMIT = 3;
 
-  // Calendar State
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
-
   // Modals
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [showConfirmGenModal, setShowConfirmGenModal] = useState(false);
-  const [pendingConfigId, setPendingConfigId] = useState(null);
   const [alertMsg, setAlertMsg] = useState(null);
   
   // Delete Confirm Modal
-  const [deleteTarget, setDeleteTarget] = useState(null); // { type: 'config' | 'roomie', id: string }
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   // Smart Settlement Modal
   const [showSettlementModal, setShowSettlementModal] = useState(false);
@@ -89,6 +78,9 @@ export default function RoomieTaskApp() {
     name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: '', nextDate: getTodayString() 
   });
 
+  // ==========================================
+  // 🚀 初始化與自動排班
+  // ==========================================
   useEffect(() => {
     liff.init({ liffId: LIFF_ID }).then(async () => {
       if (!liff.isLoggedIn()) { liff.login(); return; }
@@ -105,6 +97,15 @@ export default function RoomieTaskApp() {
   const enterGroup = async (gId, user) => {
     setLoading(true);
     setGroupId(gId);
+    
+    // 1. 先讀取一次檢查是否需要補班
+    const snapshot = await get(ref(db, `groups/${gId}`));
+    if (snapshot.exists()) {
+       const data = snapshot.val();
+       await checkAndGenerateTasks(gId, data); // 🔥 自動補班邏輯
+    }
+
+    // 2. 開啟監聽
     onValue(ref(db, `groups/${gId}`), (snap) => {
       const data = snap.val();
       if (data) {
@@ -128,6 +129,46 @@ export default function RoomieTaskApp() {
       } else { setViewState('landing'); }
       setLoading(false);
     });
+  };
+
+  // 🔥 自動產生任務的核心邏輯
+  const checkAndGenerateTasks = async (gId, data) => {
+    if (!data.taskConfigs) return;
+    const updates = {};
+    const configs = Object.values(data.taskConfigs);
+    let hasUpdates = false;
+
+    configs.forEach(cfg => {
+      let nextDate = cfg.nextDate || getTodayString();
+      const today = getTodayString();
+      
+      // 如果 下次執行日 <= 今天，就產生任務，直到 下次執行日 > 今天
+      while (nextDate <= today) {
+        const tid = `task-${generateId()}-${Date.now()}`; // 確保唯一
+        const freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq;
+        
+        // 1. 產生任務
+        updates[`groups/${gId}/tasks/${tid}`] = {
+          id: tid,
+          configId: cfg.id,
+          name: cfg.name,
+          price: cfg.price,
+          icon: cfg.icon,
+          date: nextDate,
+          status: 'pending',
+          currentHolderId: cfg.defaultAssigneeId || Object.keys(data.users)[0]
+        };
+
+        // 2. 更新下次執行日
+        nextDate = addDays(nextDate, freqNum);
+        updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
+        hasUpdates = true;
+      }
+    });
+
+    if (hasUpdates) {
+      await update(ref(db), updates);
+    }
   };
 
   const registerMember = (gId, user) => {
@@ -160,10 +201,9 @@ export default function RoomieTaskApp() {
     window.location.href = `https://liff.line.me/${LIFF_ID}?g=${gid}`;
   };
 
-  // 任務邏輯
+  // 任務動作
   const completeTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'done' });
-    // 日誌記錄
     const logId = Date.now();
     set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `✅ ${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() });
   };
@@ -172,7 +212,6 @@ export default function RoomieTaskApp() {
     const myBal = users.find(u => u.id === currentUser.id)?.balance || 0;
     update(ref(db, `groups/${groupId}/users/${currentUser.id}`), { balance: myBal - (task.price || 0) });
     update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null });
-    // 日誌記錄
     const logId = Date.now();
     set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `💸 ${currentUser.name} 釋出 ${task.name} (賞金${task.price})`, type: 'warning', time: new Date().toLocaleTimeString() });
   };
@@ -181,11 +220,11 @@ export default function RoomieTaskApp() {
     const myBal = users.find(u => u.id === currentUser.id)?.balance || 0;
     update(ref(db, `groups/${groupId}/users/${currentUser.id}`), { balance: myBal + (task.price || 0) });
     update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
-    // 日誌記錄
     const logId = Date.now();
     set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `💰 ${currentUser.name} 接手了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() });
   };
 
+  // 規則設定
   const saveConfig = async () => {
     if (configForm.price <= 0 || configForm.freq <= 0) {
       setAlertMsg("金額與頻率必須大於 0");
@@ -198,10 +237,13 @@ export default function RoomieTaskApp() {
     
     await update(ref(db, `groups/${groupId}/taskConfigs/${id}`), { ...configData });
     setIsEditingConfig(false);
-
+    
+    // 如果是新增，觸發一次檢查補班
     if (!editingConfigId) {
-      setPendingConfigId(id);
-      setShowConfirmGenModal(true);
+       // 讀取最新數據並觸發補班
+       const snap = await get(ref(db, `groups/${groupId}`));
+       await checkAndGenerateTasks(groupId, snap.val());
+       setAlertMsg("家事設定成功！已自動排程。");
     }
   };
 
@@ -212,63 +254,67 @@ export default function RoomieTaskApp() {
     }
   };
 
-  const confirmGenerateTask = async () => {
-    if (!pendingConfigId) return;
-    const tid = `task-${generateId()}`;
-    const assignee = configForm.defaultAssigneeId || currentUser.id;
-    await set(ref(db, `groups/${groupId}/tasks/${tid}`), { 
-      ...configForm, id: tid, date: configForm.nextDate || getTodayString(), status: 'pending', currentHolderId: assignee 
-    });
-    setShowConfirmGenModal(false);
-    setAlertMsg("已產生任務！");
-  };
-
-  // 智慧還款邏輯
+  // 💰 智慧還款邏輯 (抵銷算法)
   const calculateSettlements = () => {
-    let debtors = users.filter(u => u.balance < 0).sort((a,b) => a.balance - b.balance);
-    let creditors = users.filter(u => u.balance > 0).sort((a,b) => b.balance - a.balance);
+    // 1. 深拷貝並建立餘額表
+    let balances = users.map(u => ({...u})).filter(u => u.balance !== 0);
     let transactions = [];
-    
-    let dIndex = 0, cIndex = 0;
-    while(dIndex < debtors.length && cIndex < creditors.length){
-      let debtor = debtors[dIndex];
-      let creditor = creditors[cIndex];
-      let amount = Math.min(Math.abs(debtor.balance), creditor.balance);
-      
-      if(amount > 0) {
-        transactions.push({ from: debtor.name, to: creditor.name, amount: amount, fromId: debtor.id, toId: creditor.id });
-      }
 
-      debtor.balance += amount;
-      creditor.balance -= amount;
+    // 2. 分類
+    let debtors = balances.filter(u => u.balance < -0.1).sort((a,b) => a.balance - b.balance); // 欠最多錢的排前面
+    let creditors = balances.filter(u => u.balance > 0.1).sort((a,b) => b.balance - a.balance); // 借出最多錢的排前面
 
-      if(Math.abs(debtor.balance) < 0.1) dIndex++;
-      if(creditor.balance < 0.1) cIndex++;
+    let i = 0; // debtor index
+    let j = 0; // creditor index
+
+    while (i < debtors.length && j < creditors.length) {
+       let debtor = debtors[i];
+       let creditor = creditors[j];
+
+       // 取最小公約數 (能抵銷的最大金額)
+       let amount = Math.min(Math.abs(debtor.balance), creditor.balance);
+       
+       // 產生一筆建議交易
+       if (amount > 0) {
+         transactions.push({
+           fromId: debtor.id, fromName: debtor.name,
+           toId: creditor.id, toName: creditor.name,
+           amount: Math.round(amount)
+         });
+       }
+
+       // 更新餘額 (模擬扣款)
+       debtor.balance += amount;
+       creditor.balance -= amount;
+
+       // 如果結清了，移動指標
+       if (Math.abs(debtor.balance) < 0.1) i++;
+       if (creditor.balance < 0.1) j++;
     }
+
     return transactions;
   };
 
-  const settleUp = async (tx) => {
-    const updates = {};
+  const settleDebt = async (tx) => {
     const fromUser = users.find(u => u.id === tx.fromId);
     const toUser = users.find(u => u.id === tx.toId);
     
-    // 更新餘額
+    if (!fromUser || !toUser) return;
+
+    const updates = {};
     updates[`groups/${groupId}/users/${tx.fromId}/balance`] = fromUser.balance + tx.amount;
     updates[`groups/${groupId}/users/${tx.toId}/balance`] = toUser.balance - tx.amount;
     
-    // 記錄 log
     const logId = Date.now();
     updates[`groups/${groupId}/logs/${logId}`] = { 
       id: logId, 
-      msg: `💸 ${tx.from} 支付了 $${tx.amount} 給 ${tx.to} (已結清)`, 
+      msg: `💸 ${tx.fromName} 支付了 $${tx.amount} 給 ${tx.toName} (已結清)`, 
       type: 'info', 
       time: new Date().toLocaleTimeString() 
     };
 
     await update(ref(db), updates);
-    setAlertMsg(`已將 ${tx.from} 與 ${tx.to} 的該筆帳務結清！`);
-    setShowSettlementModal(false);
+    setAlertMsg("結帳成功！餘額已更新。");
   };
 
   // 45天過濾器
@@ -319,8 +365,10 @@ export default function RoomieTaskApp() {
   );
 
   return (
-    <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col overflow-hidden relative">
-      <header className="bg-white p-4 border-b flex justify-between items-center z-20">
+    // 使用 fixed inset-0 鎖定整個視窗，確保 Native App 般的體驗
+    <div className="fixed inset-0 bg-gray-50 max-w-md mx-auto flex flex-col">
+      {/* Header (Fixed) */}
+      <header className="flex-none bg-white p-4 border-b flex justify-between items-center z-20">
         <h1 className="font-bold text-lg text-gray-800">{groupName}</h1>
         <div className="relative">
           <div onClick={(e) => { e.stopPropagation(); setIsUserMenuOpen(!isUserMenuOpen); }} className="flex items-center gap-2 bg-gray-100 p-1 pr-3 rounded-full cursor-pointer">
@@ -329,117 +377,74 @@ export default function RoomieTaskApp() {
           </div>
           {isUserMenuOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white border rounded-xl shadow-xl z-50 overflow-hidden animate-in slide-in-from-top-2">
-               <button onClick={() => { setViewState('landing'); setGroupId(null); window.history.pushState({}, '', window.location.pathname); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><Home size={18}/> 我的空間 (切換)</button>
+               {/* 修正：直接操作狀態，不使用 href 跳轉，確保 SPA 體驗 */}
+               <button onClick={() => { setViewState('landing'); setGroupId(null); setIsUserMenuOpen(false); window.history.pushState({}, '', window.location.pathname); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><Home size={18}/> 我的空間</button>
                <button onClick={handleQuitGroup} className="w-full text-left p-4 text-base text-red-500 flex items-center gap-3 hover:bg-gray-50 font-bold"><LogOut size={18}/> 退出群組</button>
             </div>
           )}
         </div>
       </header>
-      {/* 點擊任意處關閉選單 */}
-      {isUserMenuOpen && <div className="fixed inset-0 z-40" onClick={() => setIsUserMenuOpen(false)}></div>}
+      {isUserMenuOpen && <div className="fixed inset-0 z-10" onClick={() => setIsUserMenuOpen(false)}></div>}
 
+      {/* Main Content (Scrollable) */}
       <main className="flex-1 overflow-y-auto p-4 pb-24">
         {view === 'roster' && (
           <div className="space-y-6">
-            <div className="flex bg-gray-200 p-1 rounded-xl">
-              <button onClick={() => setRosterViewMode('list')} className={`flex-1 py-3 rounded-lg text-base font-bold transition-all ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}>清單</button>
-              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 py-3 rounded-lg text-base font-bold transition-all ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}>日曆</button>
-            </div>
-
-            {rosterViewMode === 'list' ? (
-              <>
-                <section>
-                  <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3 text-lg"><CheckCircle2 size={20} className="text-[#28C8C8]"/> 我的待辦 (近45天)</h3>
-                  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    {myTasks.length === 0 ? 
-                      <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
-                      (showAllMyTasks ? myTasks : myTasks.slice(0, TASKS_LIMIT)).map(task => (
-                        <div key={task.id} className="p-4 flex items-center justify-between border-b last:border-0">
-                          <div className="flex items-center gap-3">
-                            <span className="text-3xl">{task.icon}</span>
-                            <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-gray-400 font-bold">{task.date}</div></div>
-                          </div>
-                          <div className="flex gap-2">
-                            <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-bold">沒空</button>
-                            <button onClick={() => completeTask(task)} className="bg-[#28C8C8] text-white px-4 py-2 rounded-lg text-sm font-bold">完成</button>
+            <section>
+              <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3 text-lg"><CheckCircle2 size={20} className="text-[#28C8C8]"/> 近期待辦</h3>
+              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                {myTasks.length === 0 ? 
+                  <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
+                  (showAllMyTasks ? myTasks : myTasks.slice(0, TASKS_LIMIT)).map(task => (
+                    <div key={task.id} className="p-4 flex items-center justify-between border-b last:border-0">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">{task.icon}</span>
+                        <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-gray-400 font-bold">{task.date}</div></div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-bold">沒空</button>
+                        <button onClick={() => completeTask(task)} className="bg-[#28C8C8] text-white px-4 py-2 rounded-lg text-sm font-bold">完成</button>
+                      </div>
+                    </div>
+                  ))
+                }
+                {myTasks.length > TASKS_LIMIT && (
+                  <div onClick={() => setShowAllMyTasks(!showAllMyTasks)} className="p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                    {showAllMyTasks ? '收起' : `查看更多 (還有 ${myTasks.length - TASKS_LIMIT} 筆)`}
+                  </div>
+                )}
+              </div>
+            </section>
+            <section>
+                <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3 text-lg"><Users size={20}/> 任務列表</h3>
+              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                {allTasks.length === 0 ? <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
+                  (showAllTaskList ? allTasks : allTasks.slice(0, TASKS_LIMIT)).map(task => {
+                    const isOpen = task.status === 'open';
+                    const isDone = task.status === 'done';
+                    const holder = users.find(u => u.id === task.currentHolderId);
+                    return (
+                      <div key={task.id} className={`p-4 flex items-center justify-between border-b last:border-0 ${isOpen ? 'bg-red-50' : ''}`}>
+                        <div className="flex items-center gap-3">
+                          <span className={`text-3xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
+                          <div>
+                            <div className="font-bold text-base text-gray-800">{task.name} {isOpen && <span className="text-red-500 text-xs font-bold">賞金中</span>}</div>
+                            <div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div>
                           </div>
                         </div>
-                      ))
-                    }
-                    {myTasks.length > TASKS_LIMIT && (
-                      <div onClick={() => setShowAllMyTasks(!showAllMyTasks)} className="p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
-                        {showAllMyTasks ? '收起' : `查看更多 (還有 ${myTasks.length - TASKS_LIMIT} 筆)`}
+                        {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold">接單 +${task.price}</button>}
+                        {isDone && <CheckCircle2 className="text-green-300" size={24}/>}
                       </div>
-                    )}
+                    )
+                  })
+                }
+                {allTasks.length > TASKS_LIMIT && (
+                  <div onClick={() => setShowAllTaskList(!showAllTaskList)} className="p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                    {showAllTaskList ? '收起' : `查看更多 (還有 ${allTasks.length - TASKS_LIMIT} 筆)`}
                   </div>
-                </section>
-                <section>
-                   <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3 text-lg"><Users size={20}/> 任務列表 (近45天)</h3>
-                  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    {allTasks.length === 0 ? <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
-                      (showAllTaskList ? allTasks : allTasks.slice(0, TASKS_LIMIT)).map(task => {
-                        const isOpen = task.status === 'open';
-                        const isDone = task.status === 'done';
-                        const holder = users.find(u => u.id === task.currentHolderId);
-                        return (
-                          <div key={task.id} className={`p-4 flex items-center justify-between border-b last:border-0 ${isOpen ? 'bg-red-50' : ''}`}>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-3xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
-                              <div><div className="font-bold text-base text-gray-800">{task.name} {isOpen && <span className="text-red-500 animate-pulse text-xs font-bold">賞金中</span>}</div><div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div></div>
-                            </div>
-                            {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold">接單 +${task.price}</button>}
-                            {isDone && <CheckCircle2 className="text-green-300" size={24}/>}
-                          </div>
-                        )
-                      })
-                    }
-                    {allTasks.length > TASKS_LIMIT && (
-                      <div onClick={() => setShowAllTaskList(!showAllTaskList)} className="p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
-                        {showAllTaskList ? '收起' : `查看更多 (還有 ${allTasks.length - TASKS_LIMIT} 筆)`}
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm border p-4">
-                <div className="flex justify-between mb-4 items-center font-bold text-gray-700 text-lg">
-                  <button onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth() - 1)))} className="p-2 hover:bg-gray-100 rounded-full"><ChevronLeft size={24}/></button>
-                  {calendarMonth.getFullYear()} 年 {calendarMonth.getMonth() + 1} 月
-                  <button onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth() + 1)))} className="p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={24}/></button>
-                </div>
-                <div className="grid grid-cols-7 text-center mb-2">
-                   {['日','一','二','三','四','五','六'].map(d => <div key={d} className="text-sm font-bold text-gray-400">{d}</div>)}
-                </div>
-                <div className="grid grid-cols-7 gap-1">
-                   {Array.from({ length: getDaysInMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) + getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) }).map((_, i) => {
-                     const first = getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth());
-                     if (i < first) return <div key={i} className="aspect-square"/>;
-                     const day = i - first + 1;
-                     const dStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                     const hasTask = currentCycleTasks.some(t => t.date === dStr && t.status !== 'done');
-                     const isSelected = dStr === calendarSelectedDate;
-                     return (
-                       <div key={i} onClick={() => setCalendarSelectedDate(dStr)} className={`aspect-square flex flex-col items-center justify-center rounded-lg text-base font-bold relative cursor-pointer ${isSelected ? 'bg-[#28C8C8] text-white' : 'hover:bg-gray-50 text-gray-700'}`}>
-                         {day}
-                         {hasTask && !isSelected && <div className="w-1.5 h-1.5 bg-red-400 rounded-full mt-1"></div>}
-                       </div>
-                     )
-                   })}
-                </div>
-                <div className="mt-4 pt-4 border-t">
-                  <h4 className="font-bold text-gray-800 text-base mb-3">{calendarSelectedDate} 的任務</h4>
-                  {currentCycleTasks.filter(t => t.date === calendarSelectedDate).length === 0 ? <p className="text-sm text-gray-400">當天無任務</p> : 
-                    currentCycleTasks.filter(t => t.date === calendarSelectedDate).map(t => (
-                      <div key={t.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-2">
-                         <div className="flex items-center gap-3"><span className="text-2xl">{t.icon}</span><span className="text-base font-bold text-gray-700">{t.name}</span></div>
-                         {t.status === 'done' ? <CheckCircle2 size={20} className="text-green-400"/> : <span className="text-xs font-bold text-gray-400">未完成</span>}
-                      </div>
-                    ))
-                  }
-                </div>
+                )}
               </div>
-            )}
+            </section>
           </div>
         )}
 
@@ -482,11 +487,12 @@ export default function RoomieTaskApp() {
             <div className="bg-white p-5 rounded-2xl border shadow-sm">
                <div className="flex justify-between items-center mb-4 border-b pb-2">
                  <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
+                 {/* 修正按鈕樣式與下方一致 */}
                  <button onClick={async () => {
                    const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
                    if (liff.isApiAvailable('shareTargetPicker')) await liff.shareTargetPicker([{ type: "text", text: `🏠 加入我的家事空間：\n${link}` }]);
                    else { navigator.clipboard.writeText(link); setAlertMsg("連結已複製"); }
-                 }} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md">發送邀請</button>
+                 }} className="text-[#28C8C8] text-sm font-bold flex items-center gap-1"><Plus size={18}/> 邀請室友</button>
                </div>
                <div className="space-y-3">
                  {users.map(u => (
@@ -501,20 +507,27 @@ export default function RoomieTaskApp() {
             <div className="bg-white p-5 rounded-2xl border shadow-sm space-y-4">
               <div className="flex justify-between items-center border-b pb-2">
                 <h3 className="font-bold text-gray-800 text-lg">家事規則</h3>
-                <button onClick={() => { setEditingConfigId(null); setConfigForm({ name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: currentUser.id, nextDate: getTodayString() }); setIsEditingConfig(true); }} className="text-[#28C8C8] text-sm font-bold flex items-center gap-1"><Plus size={18}/> 新增</button>
+                <button onClick={() => { setEditingConfigId(null); setConfigForm({ name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: currentUser.id, nextDate: getTodayString() }); setIsEditingConfig(true); }} className="text-[#28C8C8] text-sm font-bold flex items-center gap-1"><Plus size={18}/> 新增家事</button>
               </div>
               <div className="space-y-3">
                 {taskConfigs.map(c => (
                   <div key={c.id} className="flex justify-between items-center p-4 bg-white border rounded-xl shadow-sm">
-                    <div className="flex items-center gap-4"><span className="text-3xl">{c.icon}</span><div className="font-bold text-base text-gray-800">{c.name}</div></div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-3xl">{c.icon}</span>
+                      <div>
+                        <div className="font-bold text-base text-gray-800">{c.name}</div>
+                        {/* 修正：顯示金額與頻率 */}
+                        <div className="text-sm text-gray-400 font-bold">${c.price} / {c.freq}</div>
+                      </div>
+                    </div>
                     <div className="flex gap-4">
-                      <Edit2 size={20} className="text-blue-400 hover:text-blue-600 cursor-pointer" onClick={() => { 
+                      <Edit2 size={20} className="text-[#28C8C8] cursor-pointer" onClick={() => { 
                          setEditingConfigId(c.id); 
                          const freqNum = c.freq && typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '7') : 7;
                          setConfigForm({ ...c, freq: freqNum, nextDate: c.nextDate || getTodayString() }); 
                          setIsEditingConfig(true); 
                       }}/>
-                      <Trash2 size={20} className="text-red-400 hover:text-red-600 cursor-pointer" onClick={() => setDeleteTarget({ type: 'config', id: c.id })}/>
+                      <Trash2 size={20} className="text-gray-300 hover:text-red-500 cursor-pointer" onClick={() => setDeleteTarget({ type: 'config', id: c.id })}/>
                     </div>
                   </div>
                 ))}
@@ -524,32 +537,33 @@ export default function RoomieTaskApp() {
         )}
       </main>
 
-      {/* Nav */}
-      <nav className="bg-white border-t flex justify-around pb-8 pt-3">
-        {[{id:'roster', icon:CalendarDays, label:'值日表'}, {id:'wallet', icon:Wallet, label:'帳本'}, {id:'history', icon:Loader2, label:'動態'}, {id:'settings', icon:Settings, label:'設定'}].map(n => (
+      {/* Footer Nav (Fixed) */}
+      <nav className="flex-none bg-white border-t flex justify-around pb-8 pt-3 shadow-lg z-30">
+        {[{id:'roster', icon:CheckCircle2, label:'值日表'}, {id:'wallet', icon:Wallet, label:'帳本'}, {id:'history', icon:Loader2, label:'動態'}, {id:'settings', icon:Settings, label:'設定'}].map(n => (
           <button key={n.id} onClick={() => setView(n.id)} className={`flex flex-col items-center w-full py-2 ${view === n.id ? 'text-[#28C8C8]' : 'text-gray-400'}`}><n.icon size={26}/><span className="text-xs font-bold mt-1">{n.label}</span></button>
         ))}
       </nav>
 
       {/* --- Modals --- */}
       
-      {/* Smart Settlement Modal */}
+      {/* 智慧還款 Modal (修正邏輯) */}
       {showSettlementModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center p-4" onClick={() => setShowSettlementModal(false)}>
           <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 animate-in slide-in-from-bottom-5" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold text-xl mb-4 text-center">智慧還款建議 (V1)</h3>
+            <h3 className="font-bold text-xl mb-4 text-center">智慧還款建議</h3>
+            <p className="text-center text-gray-400 text-sm mb-4">系統已自動計算並抵銷債務，僅需執行以下轉帳即可結清所有帳務。</p>
             <div className="space-y-3 max-h-[60vh] overflow-y-auto mb-4">
-              {calculateSettlements().length === 0 ? <p className="text-center text-gray-400 py-4">目前沒有需要結算的帳務</p> :
+              {calculateSettlements().length === 0 ? <p className="text-center text-gray-500 font-bold py-6 bg-gray-50 rounded-xl">目前帳務已平衡，無需還款 🎉</p> :
                calculateSettlements().map((tx, idx) => (
-                 <div key={idx} className="bg-gray-50 p-4 rounded-xl flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-base font-bold text-gray-700">
-                      <span>{tx.from}</span>
-                      <ArrowRightCircle size={16} className="text-gray-400"/>
-                      <span>{tx.to}</span>
+                 <div key={idx} className="bg-gray-50 p-4 rounded-xl flex items-center justify-between border border-gray-100">
+                    <div className="flex items-center gap-3 text-base font-bold text-gray-700">
+                      <span className="text-red-500">{tx.fromName}</span>
+                      <ArrowRight size={16} className="text-gray-400"/>
+                      <span className="text-[#28C8C8]">{tx.toName}</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="font-mono font-bold text-lg">${tx.amount}</span>
-                      <button onClick={() => settleUp(tx)} className="bg-[#28C8C8] text-white px-3 py-1 rounded-lg text-xs font-bold">已還清</button>
+                      <span className="font-mono font-bold text-xl">${tx.amount}</span>
+                      <button onClick={() => settleDebt(tx)} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md">還清</button>
                     </div>
                  </div>
                ))
@@ -566,7 +580,7 @@ export default function RoomieTaskApp() {
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
              <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-800">確定刪除？</h3>
-             <p className="text-gray-500 mb-6 text-sm">此動作無法復原，請確認是否執行。</p>
+             <p className="text-gray-500 mb-6 text-base">此動作無法復原，請確認是否執行。</p>
              <div className="flex gap-3">
                <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
                <button onClick={deleteConfigConfirm} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">刪除</button>
@@ -575,13 +589,13 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Edit Config Modal */}
+      {/* Edit Config Modal (UI Adjusted) */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-6 animate-in slide-in-from-bottom-5">
             <div className="flex justify-between items-center border-b pb-4">
               <h2 className="font-bold text-xl">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
-              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={24}/></button>
+              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
             </div>
             
             <div className="flex gap-4">
@@ -595,7 +609,8 @@ export default function RoomieTaskApp() {
             </div>
 
             <div className="relative">
-              <input type="number" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full p-4 bg-gray-50 rounded-2xl font-mono text-xl font-bold outline-none focus:ring-2 focus:ring-[#28C8C8] text-center"/>
+              {/* 修正：樣式與上方金額完全一致 */}
+              <input type="number" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full p-4 pl-14 bg-gray-50 rounded-2xl font-mono text-xl font-bold outline-none focus:ring-2 focus:ring-[#28C8C8] text-left"/>
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">每</span>
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">日一次</span>
             </div>
@@ -603,35 +618,22 @@ export default function RoomieTaskApp() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-sm font-bold text-gray-400 ml-1">何時開始</label>
-                <input type="date" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-[60px] px-3 bg-gray-50 rounded-2xl font-bold outline-none text-base"/>
+                <input type="date" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-14 px-3 bg-gray-50 rounded-2xl font-bold outline-none text-base"/>
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-bold text-gray-400 ml-1">由誰開始</label>
-                <select value={configForm.defaultAssigneeId} onChange={e => setConfigForm({...configForm, defaultAssigneeId:e.target.value})} className="w-full h-[60px] px-3 bg-gray-50 rounded-2xl font-bold outline-none appearance-none text-base">
+                <select value={configForm.defaultAssigneeId} onChange={e => setConfigForm({...configForm, defaultAssigneeId:e.target.value})} className="w-full h-14 px-3 bg-gray-50 rounded-2xl font-bold outline-none appearance-none text-base">
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
             </div>
 
-            <button onClick={saveConfig} className="w-full py-5 bg-[#28C8C8] text-white rounded-2xl font-bold text-xl shadow-xl shadow-[#28C8C8]/20 active:scale-95 transition-transform">儲存家事</button>
+            <button onClick={saveConfig} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold text-xl shadow-xl shadow-[#28C8C8]/20 active:scale-95 transition-transform">儲存家事</button>
           </div>
         </div>
       )}
 
-      {/* 產生任務確認 & 通用 Alert */}
-      {showConfirmGenModal && (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 animate-in zoom-in-95 text-center">
-            <h3 className="text-xl font-bold mb-2">規則已儲存！</h3>
-            <p className="text-gray-500 mb-6 text-base">是否要立即產生第一筆任務到值日表？</p>
-            <div className="flex gap-3">
-              <button onClick={() => setShowConfirmGenModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">不用</button>
-              <button onClick={confirmGenerateTask} className="flex-1 py-3 bg-[#28C8C8] text-white rounded-xl font-bold">立即產生</button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Alert */}
       {alertMsg && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-6" onClick={() => setAlertMsg(null)}>
           <div className="bg-white w-full max-w-xs rounded-3xl p-6 animate-in zoom-in-95 text-center" onClick={e => e.stopPropagation()}>
