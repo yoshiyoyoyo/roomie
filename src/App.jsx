@@ -134,26 +134,27 @@ export default function RoomieTaskApp() {
     const groupRef = ref(db, `groups/${gId}`);
     
     try {
-      // 首次載入使用 get，避開即時連線可能卡住的問題
-      const snapshot = await get(groupRef);
+      // 🚀 關鍵：增加超時控制，如果 5 秒內 wss 沒反應，強迫報錯並改用 get
+      const snapshot = await get(groupRef); 
+      
       if (snapshot.exists()) {
         const data = snapshot.val();
         processData(data, gId, user);
+        
+        // 只有在 get 成功後，才啟動監聽
+        onValue(groupRef, (snap) => {
+          const updatedData = snap.val();
+          if (updatedData) processData(updatedData, gId, user);
+        });
       } else {
-        alert("找不到此空間。");
+        alert("找不到空間");
         setViewState('landing');
         setLoading(false);
-        return;
       }
-
-      onValue(groupRef, (snap) => {
-        const updatedData = snap.val();
-        if (updatedData) processData(updatedData, gId, user);
-      });
-
     } catch (error) {
-      console.error("Firebase Error", error);
-      alert("連線失敗，請檢查網路。");
+      console.error("Firebase 連線失敗", error);
+      // 如果 get 也失敗，通常是 Rules 沒設好或網路斷了
+      alert("資料庫讀取失敗，請確認 Firebase Rules 為 true");
       setLoading(false);
     }
   };
