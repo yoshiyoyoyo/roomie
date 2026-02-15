@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import liff from '@line/liff';
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, get, set, serverTimestamp, update, onValue, remove } from "firebase/database";
+import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, get } from "firebase/database";
 import { 
-  Plus, Home, ChevronRight, Users, CheckCircle2, 
-  Wallet, Settings, History, LogOut, Loader2, X, 
-  CalendarDays, List, ChevronLeft, Edit2, Trash2, Send, ChevronDown, Calendar
+  Trash2, Sparkles, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
+  CalendarDays, UserPlus, List, ChevronLeft, ChevronRight,
+  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, RefreshCw, DollarSign
 } from 'lucide-react';
 
-// --- 配置區 ---
+// ==========================================
+// ⚙️ 系統設定
+// ==========================================
 const LIFF_ID = "2009134573-7SuphV8b"; 
 const firebaseConfig = {
   apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
@@ -22,294 +25,233 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- 工具函式 ---
+// 工具
 const getTodayString = () => new Date().toISOString().split('T')[0];
-const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
-const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+const generateId = () => Math.random().toString(36).substr(2, 9);
 
-export default function App() {
+export default function RoomieTaskApp() {
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
-  const [myGroups, setMyGroups] = useState([]);
-  const [currentGroupId, setCurrentGroupId] = useState(null);
-  const [groupData, setGroupData] = useState(null);
+  const [viewState, setViewState] = useState('landing'); 
+  const [groupId, setGroupId] = useState(null);
+  const [groupName, setGroupName] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
   
-  const [view, setView] = useState('roster'); 
-  const [rosterMode, setRosterMode] = useState('list');
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef(null);
+  const [users, setUsers] = useState([]);
+  const [taskConfigs, setTaskConfigs] = useState([]);
+  const [currentCycleTasks, setCurrentCycleTasks] = useState([]);
+  const [logs, setLogs] = useState([]);
 
-  // 日曆與編輯狀態
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [view, setView] = useState('roster');
+  const [rosterViewMode, setRosterViewMode] = useState('list');
+  const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
+  const [isTaskListOpen, setIsTaskListOpen] = useState(true);
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
+  const [myGroups, setMyGroups] = useState([]);
+
   const [isEditingConfig, setIsEditingConfig] = useState(false);
-  const [editingConfig, setEditingConfig] = useState({ 
-    name: '', price: 50, freq: 7, icon: '🧹', 
-    firstAssignee: '', startDate: getTodayString() 
-  });
+  const [editingConfigId, setEditingConfigId] = useState(null);
+  const [configForm, setConfigForm] = useState({ name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: '' });
 
+  // 初始化
   useEffect(() => {
-    const loadLiffSDK = () => {
-      return new Promise((resolve) => {
-        if (window.liff) return resolve(window.liff);
-        const script = document.createElement('script');
-        script.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
-        script.async = true;
-        script.onload = () => resolve(window.liff);
-        document.head.appendChild(script);
-      });
-    };
+    liff.init({ liffId: LIFF_ID }).then(async () => {
+      if (!liff.isLoggedIn()) { liff.login(); return; }
+      const profile = await liff.getProfile();
+      const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
+      setCurrentUser(user);
+      
+      const saved = JSON.parse(localStorage.getItem('roomie_groups') || '[]');
+      setMyGroups(saved);
 
-    const startApp = async () => {
-      try {
-        const liff = await loadLiffSDK();
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) { liff.login(); return; }
-        const profile = await liff.getProfile();
-        setUser({ id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl });
-        
-        setMyGroups(JSON.parse(localStorage.getItem('roomie_history') || '[]'));
-
-        const params = new URLSearchParams(window.location.search);
-        const gId = params.get('g');
-        if (gId) {
-          await loadGroup(gId, profile.userId, profile.displayName, profile.pictureUrl);
-        } else {
-          setLoading(false);
-        }
-      } catch (err) { setLoading(false); }
-    };
-    startApp();
-
-    const handleClickOutside = (event) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
-        setShowUserMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+      const gId = new URLSearchParams(window.location.search).get('g');
+      if (gId) enterGroup(gId, user); else setLoading(false);
+    });
   }, []);
 
-  const loadGroup = async (gId, uId, uName, uAvatar) => {
-    const groupRef = ref(db, `groups/${gId}`);
-    const snapshot = await get(groupRef);
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      setGroupData(data);
-      setCurrentGroupId(gId);
-      
-      const history = JSON.parse(localStorage.getItem('roomie_history') || '[]');
-      if (!history.find(h => h.id === gId)) {
-        const newHistory = [{ id: gId, name: data.name || '未命名空間' }, ...history].slice(0, 5);
-        localStorage.setItem('roomie_history', JSON.stringify(newHistory));
-        setMyGroups(newHistory);
-      }
-      if (!data.members || !data.members[uId]) {
-        await update(ref(db, `groups/${gId}/members/${uId}`), { id: uId, name: uName, avatar: uAvatar, balance: 0 });
-      }
-      onValue(groupRef, (snap) => setGroupData(snap.val()));
-      setLoading(false);
-    } else {
-      window.location.href = `https://liff.line.me/${LIFF_ID}`;
-    }
-  };
-
-  const handleCreateGroup = async () => {
-    if (!newGroupName.trim()) return;
+  const enterGroup = async (gId, user) => {
     setLoading(true);
-    const newId = `g-${Math.random().toString(36).substr(2, 9)}`;
-    try {
-      await set(ref(db, `groups/${newId}`), {
-        id: newId, name: newGroupName, createdAt: serverTimestamp(),
-        members: { [user.id]: { id: user.id, name: user.name, avatar: user.avatar, balance: 0 } },
-        logs: [{ time: new Date().toLocaleString(), msg: `🏠 ${user.name} 建立了空間` }]
-      });
-      window.location.href = `https://liff.line.me/${LIFF_ID}?g=${newId}`;
-    } catch (e) { alert("建立失敗"); setLoading(false); }
+    setGroupId(gId);
+    onValue(ref(db, `groups/${gId}`), (snap) => {
+      const data = snap.val();
+      if (data) {
+        setUsers(data.users ? Object.values(data.users) : []);
+        setTaskConfigs(data.taskConfigs ? Object.values(data.taskConfigs) : []);
+        const tList = data.tasks ? Object.values(data.tasks) : [];
+        setCurrentCycleTasks(tList.sort((a,b) => (a.date || '').localeCompare(b.date || '')));
+        const lList = data.logs ? Object.values(data.logs) : [];
+        setLogs(lList.sort((a,b) => b.id - a.id));
+        setGroupName(data.metadata?.name || '家');
+        setViewState('app');
+        if (user && (!data.users || !data.users[user.id])) registerMember(gId, user);
+      } else { setViewState('landing'); }
+      setLoading(false);
+    });
   };
 
-  const handleShare = async () => {
-    if (!window.liff) return;
-    const link = `https://liff.line.me/${LIFF_ID}?g=${currentGroupId}`;
-    if (window.liff.isApiAvailable('shareTargetPicker')) {
-      try {
-        await window.liff.shareTargetPicker([{
-          type: "text",
-          text: `🏠 邀請你加入空間「${groupData.name}」！\n點擊連結加入：\n${link}`
-        }]);
-      } catch (error) { console.error("分享取消"); }
-    } else {
-      navigator.clipboard.writeText(link);
-      alert("連結已複製");
-    }
+  const registerMember = (gId, user) => {
+    update(ref(db, `groups/${gId}/users/${user.id}`), { ...user, balance: 0 });
+    addLog(gId, `👋 ${user.name} 加入了空間`, 'success');
   };
 
-  const saveTaskConfig = async () => {
-    if (!editingConfig.name || !editingConfig.firstAssignee) {
-      alert("請完整填寫家事名稱與負責人");
-      return;
-    }
-    const cfgId = `cfg-${Date.now()}`;
-    const taskId = `task-${Date.now()}`;
-    
-    const newConfig = { ...editingConfig, id: cfgId };
-    
-    // 同時建立規則與第一個任務
+  const addLog = (gId, msg, type = 'info') => {
+    const id = Date.now();
+    set(ref(db, `groups/${gId}/logs/${id}`), { id, msg, type, time: new Date().toLocaleTimeString() });
+  };
+
+  // --- 家事操作 ---
+  const completeTask = async (task) => {
+    await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'done' });
+    addLog(groupId, `✅ ${currentUser.name} 完成了: ${task.name}`, 'success');
+  };
+
+  const releaseTask = async (task) => {
+    const myBal = users.find(u => u.id === currentUser.id)?.balance || 0;
     const updates = {};
-    updates[`groups/${currentGroupId}/configs/${cfgId}`] = newConfig;
-    updates[`groups/${currentGroupId}/tasks/${taskId}`] = {
-      id: taskId,
-      configId: cfgId,
-      name: editingConfig.name,
-      icon: editingConfig.icon,
-      price: editingConfig.price,
-      date: editingConfig.startDate,
-      assigneeId: editingConfig.firstAssignee,
-      status: 'pending'
-    };
-    updates[`groups/${currentGroupId}/logs/${Date.now()}`] = {
-      time: new Date().toLocaleString(),
-      msg: `📝 ${user.name} 新增了家事「${editingConfig.name}」`
-    };
-
+    updates[`groups/${groupId}/tasks/${task.id}/status`] = 'open';
+    updates[`groups/${groupId}/tasks/${task.id}/currentHolderId`] = null;
+    updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myBal - (task.price || 0);
     await update(ref(db), updates);
-    setIsEditingConfig(false);
-    setEditingConfig({ name: '', price: 50, freq: 7, icon: '🧹', firstAssignee: '', startDate: getTodayString() });
+    addLog(groupId, `💸 ${currentUser.name} 釋出任務並支付賞金 $${task.price}`, 'warning');
   };
 
-  if (loading) return (
-    <div className="flex h-[100dvh] flex-col items-center justify-center bg-white">
-      <Loader2 className="animate-spin text-cyan-500 mb-4" size={40} />
-      <p className="text-gray-400 text-sm font-bold animate-pulse">連線中...</p>
-    </div>
-  );
+  const claimTask = async (task) => {
+    const myBal = users.find(u => u.id === currentUser.id)?.balance || 0;
+    const updates = {};
+    updates[`groups/${groupId}/tasks/${task.id}/status`] = 'pending';
+    updates[`groups/${groupId}/tasks/${task.id}/currentHolderId`] = currentUser.id;
+    updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myBal + (task.price || 0);
+    await update(ref(db), updates);
+    addLog(groupId, `💰 ${currentUser.name} 接手了賞金任務: ${task.name}`, 'success');
+  };
 
-  if (!currentGroupId) return (
-    <div className="min-h-screen bg-gray-50 max-w-md mx-auto flex flex-col">
-      <div className="p-8 bg-white border-b shadow-sm">
-        <h1 className="text-2xl font-bold text-gray-800">嗨，{user?.name}</h1>
-        <p className="text-gray-500 text-sm">選擇空間或建立一個新的</p>
-      </div>
-      <div className="flex-1 p-6 space-y-4">
+  const saveConfig = async () => {
+    const id = editingConfigId || `cfg-${generateId()}`;
+    const configData = { ...configForm, id, freq: `每 ${configForm.freq} 天`, defaultAssigneeId: configForm.defaultAssigneeId || currentUser.id };
+    await update(ref(db), { [`groups/${groupId}/taskConfigs/${id}`]: configData });
+    setIsEditingConfig(false);
+    
+    if (!editingConfigId && confirm("已儲存規則！是否立即在值日表中產生此任務？")) {
+      const tid = `task-${generateId()}`;
+      await set(ref(db, `groups/${groupId}/tasks/${tid}`), {
+        id: tid, ...configData, date: getTodayString(), status: 'pending', currentHolderId: configData.defaultAssigneeId
+      });
+    }
+  };
+
+  // UI 渲染
+  if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-[#28C8C8]" size={40}/></div>;
+
+  if (viewState === 'landing') return (
+    <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col p-6">
+      <h1 className="text-2xl font-bold mb-6">🏠 我的家事空間</h1>
+      <div className="flex-1 space-y-4">
         {myGroups.map(g => (
-          <div key={g.id} onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}?g=${g.id}`}
-               className="bg-white p-5 rounded-3xl border flex justify-between items-center shadow-sm active:bg-gray-50 transition-all">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-cyan-50 rounded-2xl flex items-center justify-center text-cyan-600"><Home size={24}/></div>
-              <span className="font-bold text-gray-700">{g.name}</span>
-            </div>
-            <ChevronRight className="text-gray-300" />
+          <div key={g.id} onClick={() => enterGroup(g.id, currentUser)} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center">
+            <span className="font-bold">{g.name}</span><ChevronRight size={18} className="text-gray-300"/>
           </div>
         ))}
       </div>
-      <div className="p-6 bg-white border-t"><button onClick={() => setShowCreateModal(true)} className="w-full py-4 bg-cyan-500 text-white rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2"><Plus size={20}/> 建立新空間</button></div>
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-          <div className="bg-white w-full max-w-md rounded-[32px] p-8 space-y-6">
-            <h3 className="font-bold text-xl">新空間命名</h3>
-            <input autoFocus type="text" placeholder="我的溫馨小家" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="w-full p-4 bg-gray-100 rounded-2xl border-none focus:ring-2 focus:ring-cyan-500 outline-none" />
-            <button onClick={handleCreateGroup} className="w-full py-4 bg-cyan-500 text-white rounded-2xl font-bold">確認建立</button>
-            <button onClick={() => setShowCreateModal(false)} className="w-full text-gray-400 text-sm">取消</button>
-          </div>
-        </div>
-      )}
+      <button onClick={async () => {
+        const gid = `rm-${generateId()}`;
+        await set(ref(db, `groups/${gid}`), { metadata: { name: `${currentUser.name} 的家` }, users: { [currentUser.id]: { ...currentUser, balance: 0 } } });
+        window.location.href = `https://liff.line.me/${LIFF_ID}?g=${gid}`;
+      }} className="bg-[#28C8C8] text-white py-4 rounded-2xl font-bold shadow-lg">+ 建立新空間</button>
     </div>
   );
 
-  const tasks = groupData?.tasks ? Object.values(groupData.tasks) : [];
-
   return (
-    <div className="min-h-screen bg-gray-50 max-w-md mx-auto flex flex-col pb-24 overflow-hidden relative">
-      <header className="p-4 bg-white border-b flex justify-between items-center sticky top-0 z-30">
-        <h2 className="font-extrabold text-gray-800 truncate text-lg">{groupData?.name}</h2>
-        <div className="relative" ref={userMenuRef}>
-          <div onClick={() => setShowUserMenu(!showUserMenu)} className="flex items-center gap-1 cursor-pointer active:scale-95 transition-transform">
-            <img src={user?.avatar} className="w-8 h-8 rounded-full border shadow-sm" alt="me" />
-            <ChevronDown size={14} className={`text-gray-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
-          </div>
-          {showUserMenu && (
-            <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-50">
-              <button onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}`} className="w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                <Home size={16} className="text-cyan-500"/> 我的群組
-              </button>
-              <div className="border-t border-gray-50 my-1"></div>
-              <button onClick={() => { if(window.confirm("退出群組？")) window.location.href = `https://liff.line.me/${LIFF_ID}`; }} className="w-full px-4 py-3 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2">
-                <LogOut size={16}/> 退出群組
-              </button>
-            </div>
-          )}
+    <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col overflow-hidden">
+      {/* Header */}
+      <header className="bg-white p-4 border-b flex justify-between items-center">
+        <div className="flex items-center gap-2" onClick={() => window.location.href = `https://liff.line.me/${LIFF_ID}`}>
+          <ChevronLeft size={20}/><h1 className="font-bold truncate max-w-[120px]">{groupName}</h1>
+        </div>
+        <div className="flex items-center gap-2 bg-gray-100 p-1 pr-3 rounded-full">
+          <img src={currentUser?.avatar} className="w-6 h-6 rounded-full"/>
+          <span className="text-[10px] font-bold">{currentUser?.name}</span>
         </div>
       </header>
 
-      <main className="p-4 flex-1">
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto p-4 pb-24">
         {view === 'roster' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="flex bg-gray-200 p-1 rounded-xl">
-              <button onClick={() => setRosterMode('list')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterMode === 'list' ? 'bg-white text-cyan-600 shadow-sm' : 'text-gray-500'}`}>清單模式</button>
-              <button onClick={() => setRosterMode('calendar')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterMode === 'calendar' ? 'bg-white text-cyan-600 shadow-sm' : 'text-gray-500'}`}>日曆模式</button>
+              <button onClick={() => setRosterViewMode('list')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8]' : 'text-gray-500'}`}>清單模式</button>
+              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8]' : 'text-gray-500'}`}>日曆模式</button>
             </div>
-            
-            {rosterMode === 'list' ? (
-              <div className="space-y-3">
-                {tasks.length === 0 ? (
-                  <div className="bg-white rounded-3xl border p-12 flex flex-col items-center justify-center text-gray-400 space-y-3">
-                    <CheckCircle2 size={48} className="opacity-10" />
-                    <p className="text-sm font-bold">目前無任務</p>
+
+            {rosterViewMode === 'list' ? (
+              <div className="space-y-6">
+                <section>
+                  <div className="flex justify-between items-center mb-2" onClick={() => setIsMyTasksOpen(!isMyTasksOpen)}>
+                    <h3 className="font-bold text-gray-700 flex items-center gap-2"><CheckCircle2 size={18} className="text-[#28C8C8]"/> 我的待辦</h3>
+                    {isMyTasksOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
                   </div>
-                ) : tasks.map(t => (
-                  <div key={t.id} className="bg-white p-4 rounded-2xl border flex justify-between items-center shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{t.icon}</span>
-                      <div>
-                        <p className="font-bold text-gray-800">{t.name}</p>
-                        <p className="text-[10px] text-gray-400">{t.date} · {groupData?.members?.[t.assigneeId]?.name}</p>
-                      </div>
+                  {isMyTasksOpen && (
+                    <div className="bg-white rounded-xl shadow-sm border divide-y">
+                      {currentCycleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending').map(task => (
+                        <div key={task.id} className="p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl">{task.icon}</span>
+                            <div><div className="font-bold text-sm">{task.name}</div><div className="text-[10px] text-gray-400">{task.date}</div></div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-xs font-bold">沒空</button>
+                            <button onClick={() => completeTask(task)} className="bg-[#28C8C8] text-white px-3 py-1.5 rounded-lg text-xs font-bold">完成</button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    {t.status === 'pending' && <button className="text-xs bg-cyan-500 text-white px-3 py-1.5 rounded-lg font-bold">完成</button>}
+                  )}
+                </section>
+
+                <section>
+                  <div className="flex justify-between items-center mb-2" onClick={() => setIsTaskListOpen(!isTaskListOpen)}>
+                    <h3 className="font-bold text-gray-700 flex items-center gap-2"><Users size={18} className="text-gray-400"/> 任務列表</h3>
+                    {isTaskListOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
                   </div>
-                ))}
+                  {isTaskListOpen && (
+                    <div className="bg-white rounded-xl shadow-sm border divide-y">
+                      {currentCycleTasks.map(task => {
+                        const isOpen = task.status === 'open';
+                        const isDone = task.status === 'done';
+                        const holder = users.find(u => u.id === task.currentHolderId);
+                        return (
+                          <div key={task.id} className={`p-4 flex items-center justify-between ${isOpen ? 'bg-red-50' : ''}`}>
+                            <div className="flex items-center gap-3">
+                              <span className={`text-2xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
+                              <div>
+                                <div className="font-bold text-sm flex items-center gap-2">{task.name} {isOpen && <span className="bg-red-500 text-white text-[8px] px-1 rounded animate-pulse">賞金 $${task.price}</span>}</div>
+                                <div className="text-[10px] text-gray-400">{task.date} · {isOpen ? '徵求中' : (holder?.name || '未分配')}</div>
+                              </div>
+                            </div>
+                            {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold">接單</button>}
+                            {isDone && <CheckCircle2 className="text-green-300" size={20}/>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
               </div>
             ) : (
-              <div className="bg-white rounded-3xl border p-6">
-                <div className="flex justify-between items-center mb-6">
-                  <ChevronLeft onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth() - 1)))}/>
-                  <span className="font-bold">{calendarMonth.getFullYear()} / {calendarMonth.getMonth() + 1}</span>
-                  <ChevronRight onClick={() => setCalendarMonth(new Date(calendarMonth.setMonth(calendarMonth.getMonth() + 1)))}/>
-                </div>
-                <div className="grid grid-cols-7 gap-1 text-center">
-                   {['日','一','二','三','四','五','六'].map(d => <div key={d} className="text-[10px] text-gray-400 mb-2">{d}</div>)}
-                   {Array.from({ length: getDaysInMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) + getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) }).map((_, i) => {
-                     const first = getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth());
-                     if (i < first) return <div key={i} />;
-                     const day = i - first + 1;
-                     const dStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                     const hasTask = tasks.some(t => t.date === dStr);
-                     return (
-                       <div key={i} onClick={() => setCalendarSelectedDate(dStr)} className={`aspect-square flex flex-col items-center justify-center text-sm rounded-lg relative ${dStr === calendarSelectedDate ? 'bg-cyan-500 text-white font-bold' : 'text-gray-700'}`}>
-                         {day}
-                         {hasTask && <div className={`w-1 h-1 rounded-full mt-0.5 ${dStr === calendarSelectedDate ? 'bg-white' : 'bg-cyan-500'}`} />}
-                       </div>
-                     )
-                   })}
-                </div>
-              </div>
+              <div className="bg-white p-4 rounded-xl shadow-sm text-center py-20 text-gray-400">日曆功能已整合資料</div>
             )}
           </div>
         )}
 
         {view === 'wallet' && (
           <div className="space-y-4">
-            <div className="bg-cyan-500 p-8 rounded-[40px] text-white shadow-xl shadow-cyan-100">
-              <p className="opacity-70 text-sm font-bold">我的結餘</p>
-              <h1 className="text-5xl font-bold font-mono">NT$ {groupData?.members?.[user.id]?.balance || 0}</h1>
+            <div className="bg-[#28C8C8] p-6 rounded-2xl text-white shadow-lg">
+              <div className="text-xs opacity-70">我的結餘</div>
+              <div className="text-4xl font-bold font-mono">${users.find(u => u.id === currentUser?.id)?.balance || 0}</div>
             </div>
-            <div className="bg-white rounded-3xl border divide-y overflow-hidden">
-              {groupData?.members && Object.values(groupData.members).map(m => (
-                <div key={m.id} className="p-4 flex justify-between items-center font-bold">
-                  <div className="flex items-center gap-3"><img src={m.avatar} className="w-10 h-10 rounded-full border"/><span className="text-gray-700">{m.name}</span></div>
-                  <span className={m.balance >= 0 ? 'text-cyan-600' : 'text-red-500'}>${m.balance}</span>
+            <div className="bg-white rounded-xl border divide-y">
+              {users.map(u => (
+                <div key={u.id} className="p-4 flex justify-between items-center">
+                  <div className="flex items-center gap-3"><img src={u.avatar} className="w-8 h-8 rounded-full"/><span className="font-bold text-sm">{u.name}</span></div>
+                  <span className={`font-mono font-bold ${u.balance >= 0 ? 'text-[#28C8C8]' : 'text-red-500'}`}>{u.balance >= 0 ? '+' : ''}{u.balance}</span>
                 </div>
               ))}
             </div>
@@ -317,95 +259,76 @@ export default function App() {
         )}
 
         {view === 'history' && (
-          <div className="space-y-4">
-             <div className="bg-white rounded-3xl border p-4 shadow-sm flex items-center justify-between">
-                <div className="flex -space-x-2">
-                  {groupData?.members && Object.values(groupData.members).map(m => <img key={m.id} src={m.avatar} className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />)}
-                </div>
-                <button onClick={handleShare} className="text-xs text-cyan-500 font-bold bg-cyan-50 px-4 py-2 rounded-full flex items-center gap-1 active:scale-95 transition-all"><Plus size={14}/> 邀請室友</button>
-             </div>
-             <div className="bg-white rounded-3xl border p-6 space-y-6">
-                <h3 className="font-bold text-gray-700 flex items-center gap-2"><History size={18}/> 最新動態</h3>
-                <div className="space-y-6">
-                  {groupData?.logs?.slice(-10).reverse().map((log, i) => (
-                    <div key={i} className="flex gap-4">
-                      <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full mt-1.5 shrink-0" />
-                      <div><p className="text-[10px] text-gray-400 font-mono mb-1">{log.time}</p><p className="text-sm text-gray-800 leading-snug">{log.msg}</p></div>
-                    </div>
-                  ))}
-                </div>
-             </div>
+          <div className="space-y-4 pl-4 border-l-2 border-gray-100 ml-2">
+            {logs.map(log => (
+              <div key={log.id} className="relative pb-4">
+                <div className={`absolute -left-[23px] top-1 w-3 h-3 rounded-full border-2 border-white ${log.type === 'success' ? 'bg-green-500' : log.type === 'warning' ? 'bg-red-500' : 'bg-gray-400'}`}></div>
+                <div className="text-xs text-gray-800">{log.msg}</div>
+                <div className="text-[8px] text-gray-400">{log.time}</div>
+              </div>
+            ))}
           </div>
         )}
 
         {view === 'settings' && (
-          <div className="space-y-4">
-            <div className="bg-white p-4 rounded-3xl border shadow-sm flex items-center justify-between">
-                <div className="flex -space-x-2">
-                  {groupData?.members && Object.values(groupData.members).map(m => <img key={m.id} src={m.avatar} className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />)}
-                </div>
-                <button onClick={handleShare} className="text-xs text-cyan-500 font-bold bg-cyan-50 px-4 py-2 rounded-full flex items-center gap-1"><Plus size={14}/> 邀請室友</button>
+          <div className="space-y-6">
+            <div className="bg-white p-4 rounded-xl border flex justify-between items-center">
+              <div><div className="font-bold text-sm">邀請室友</div><div className="text-[10px] text-gray-400">目前 {users.length} 人</div></div>
+              <button onClick={async () => {
+                const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
+                if (liff.isApiAvailable('shareTargetPicker')) await liff.shareTargetPicker([{ type: "text", text: `🏠 加入「${groupName}」：\n${link}` }]);
+                else { navigator.clipboard.writeText(link); alert("已複製"); }
+              }} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-xs font-bold">發送連結</button>
             </div>
-            <div className="bg-white p-6 rounded-3xl border shadow-sm space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-gray-800">家事設定</h3>
-                <div className="flex gap-2">
-                  <button onClick={() => setIsEditingConfig(true)} className="text-cyan-500 font-bold text-xs bg-cyan-50 px-3 py-1.5 rounded-full">+ 新增</button>
-                  <button className="text-gray-400 bg-gray-50 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1"><Edit2 size={12}/> 編輯</button>
-                </div>
-              </div>
-              <div className="space-y-3">
-                {groupData?.configs ? Object.values(groupData.configs).map(cfg => (
-                  <div key={cfg.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-2xl border border-gray-100">
-                    <div className="flex items-center gap-3"><span className="text-2xl">{cfg.icon}</span><div><p className="font-bold text-sm">{cfg.name}</p><p className="text-[10px] text-gray-400">每 {cfg.freq} 天 / ${cfg.price}</p></div></div>
-                    <Trash2 size={16} className="text-gray-300 cursor-pointer" onClick={() => remove(ref(db, `groups/${currentGroupId}/configs/${cfg.id}`))} />
+
+            <div className="bg-white p-4 rounded-xl border space-y-4">
+              <div className="flex justify-between items-center"><h3 className="font-bold text-sm">家事規則</h3><button onClick={() => { setEditingConfigId(null); setConfigForm({ name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: currentUser.id }); setIsEditingConfig(true); }} className="text-[#28C8C8] text-xs font-bold">+ 新增</button></div>
+              <div className="space-y-2">
+                {taskConfigs.map(c => (
+                  <div key={c.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
+                    <div className="flex items-center gap-3"><span className="text-xl">{c.icon}</span><div><div className="font-bold text-sm">{c.name}</div><div className="text-[10px] text-gray-400">${c.price} / {c.freq}</div></div></div>
+                    <div className="flex gap-3 text-gray-300">
+                      <Edit2 size={16} className="hover:text-[#28C8C8] cursor-pointer" onClick={() => { setEditingConfigId(c.id); setConfigForm({ ...c, freq: parseInt(c.freq.match(/\d+/)[0]) }); setIsEditingConfig(true); }}/>
+                      <Trash2 size={16} className="hover:text-red-500 cursor-pointer" onClick={() => remove(ref(db, `groups/${groupId}/taskConfigs/${c.id}`))}/>
+                    </div>
                   </div>
-                )) : <p className="text-center py-4 text-gray-300 text-xs italic">尚未設定家事</p>}
+                ))}
               </div>
             </div>
+            <button onClick={() => { if(confirm("確定登出空間？")) { localStorage.clear(); window.location.href=`https://liff.line.me/${LIFF_ID}`; } }} className="w-full py-3 text-red-400 text-xs font-bold border border-red-100 rounded-xl">退出此空間</button>
           </div>
         )}
       </main>
 
-      {isEditingConfig && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-md rounded-[40px] p-8 space-y-5 animate-in zoom-in duration-200">
-            <div className="flex justify-between items-center"><h3 className="font-black text-xl text-gray-800">新增家事</h3><X onClick={() => setIsEditingConfig(false)} className="text-gray-400 cursor-pointer" /></div>
-            <div className="space-y-4">
-              <input type="text" placeholder="家事名稱 (例如：掃地)" value={editingConfig.name} onChange={e => setEditingConfig({...editingConfig, name: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl border-none outline-none focus:ring-2 focus:ring-cyan-500" />
-              <div className="flex gap-3">
-                <input type="text" placeholder="圖示" value={editingConfig.icon} onChange={e => setEditingConfig({...editingConfig, icon: e.target.value})} className="w-20 p-4 bg-gray-50 rounded-2xl text-center text-xl outline-none" />
-                <input type="number" placeholder="賞金" defaultValue="50" onChange={e => setEditingConfig({...editingConfig, price: Number(e.target.value) || 50})} className="flex-1 p-4 bg-gray-50 rounded-2xl font-bold outline-none" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 ml-1">由誰開始</label>
-                  <select className="w-full p-3 bg-gray-50 rounded-xl text-sm outline-none appearance-none" onChange={e => setEditingConfig({...editingConfig, firstAssignee: e.target.value})}>
-                    <option value="">選擇成員</option>
-                    {Object.values(groupData.members).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-gray-400 ml-1">從何時開始</label>
-                  <input type="date" value={editingConfig.startDate} onChange={e => setEditingConfig({...editingConfig, startDate: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl text-sm outline-none" />
-                </div>
-              </div>
-              <div className="flex items-center gap-3 bg-gray-50 p-4 rounded-2xl">
-                <span className="text-sm text-gray-500">每</span>
-                <input type="number" defaultValue="7" className="w-16 bg-white p-2 rounded-lg text-center font-bold text-cyan-600 shadow-sm" onChange={e => setEditingConfig({...editingConfig, freq: Number(e.target.value) || 7})} />
-                <span className="text-sm text-gray-500">天一次</span>
-              </div>
-            </div>
-            <button onClick={saveTaskConfig} className="w-full py-4 bg-cyan-500 text-white rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-all">儲存家事</button>
-          </div>
-        </div>
-      )}
-
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t flex justify-around p-3 max-w-md mx-auto z-20">
-        {[ {id:'roster', icon:CheckCircle2, lab:'值日表'}, {id:'wallet', icon:Wallet, lab:'帳本'}, {id:'history', icon:History, lab:'動態'}, {id:'settings', icon:Settings, lab:'設定'} ].map(n => (
-          <button key={n.id} onClick={() => setView(n.id)} className={`flex flex-col items-center p-2 rounded-2xl transition-all ${view === n.id ? 'text-cyan-600' : 'text-gray-400'}`}><n.icon size={22} /><span className="text-[10px] mt-1 font-bold">{n.lab}</span></button>
+      {/* Footer Nav */}
+      <nav className="bg-white border-t flex justify-around pb-8 pt-2">
+        {[{id:'roster', icon:CalendarDays, label:'值日表'}, {id:'wallet', icon:Wallet, label:'帳本'}, {id:'history', icon:History, label:'動態'}, {id:'settings', icon:Settings, label:'設定'}].map(n => (
+          <button key={n.id} onClick={() => setView(n.id)} className={`flex flex-col items-center w-full py-2 ${view === n.id ? 'text-[#28C8C8]' : 'text-gray-400'}`}><n.icon size={22}/><span className="text-[10px] font-bold mt-1">{n.label}</span></button>
         ))}
       </nav>
+
+      {/* Editor Modal */}
+      {isEditingConfig && (
+        <div className="fixed inset-0 bg-white z-50 flex flex-col">
+          <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+            <h2 className="font-bold">{editingConfigId ? '編輯規則' : '新增規則'}</h2>
+            <button onClick={() => setIsEditingConfig(false)}><X/></button>
+          </div>
+          <div className="p-6 space-y-6 flex-1">
+            <input type="text" placeholder="名稱 (如：倒垃圾)" value={configForm.name} onChange={e => setConfigForm({...configForm, name:e.target.value})} className="w-full p-4 border rounded-xl"/>
+            <div className="flex gap-4">
+              <input type="text" placeholder="圖示" value={configForm.icon} onChange={e => setConfigForm({...configForm, icon:e.target.value})} className="w-20 p-4 border rounded-xl text-center text-2xl"/>
+              <input type="number" placeholder="金額" value={configForm.price} onChange={e => setConfigForm({...configForm, price:Number(e.target.value)})} className="flex-1 p-4 border rounded-xl"/>
+            </div>
+            <div className="flex items-center gap-2">每 <input type="number" value={configForm.freq} onChange={e => setConfigForm({...configForm, freq:Number(e.target.value)})} className="w-20 p-2 border rounded-lg text-center"/> 天產生一次</div>
+            <div className="text-sm font-bold text-gray-500">預設負責人:</div>
+            <select value={configForm.defaultAssigneeId} onChange={e => setConfigForm({...configForm, defaultAssigneeId:e.target.value})} className="w-full p-4 border rounded-xl bg-white">
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div className="p-4 border-t"><button onClick={saveConfig} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold text-lg">儲存家事設定</button></div>
+        </div>
+      )}
     </div>
   );
 }
