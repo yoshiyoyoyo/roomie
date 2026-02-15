@@ -236,20 +236,33 @@ export default function RoomieTaskApp() {
     setAlertMsg("群組已完全重置");
   };
 
+  // ✅ 修復問題1: 退出群組功能
   const handleQuitGroupConfirm = async () => {
-    const logId = Date.now();
-    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 離開了空間`, type: 'warning', time: new Date().toLocaleTimeString() });
-    await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
-    
-    const newGroups = myGroups.filter(g => g.id !== groupId);
-    localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
-    setMyGroups(newGroups);
-    
-    setShowQuitModal(false);
-    setGroupId(null);
-    setIsUserMenuOpen(false);
-    setViewState('landing');
-    window.location.reload(); 
+    try {
+      const logId = Date.now();
+      await set(ref(db, `groups/${groupId}/logs/${logId}`), { 
+        id: logId, 
+        msg: `${currentUser.name} 離開了空間`, 
+        type: 'warning', 
+        time: new Date().toLocaleTimeString() 
+      });
+      await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
+      
+      const newGroups = myGroups.filter(g => g.id !== groupId);
+      localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+      setMyGroups(newGroups);
+      
+      setShowQuitModal(false);
+      setIsUserMenuOpen(false);
+      
+      // 清除 URL 參數並回到首頁
+      window.history.pushState({}, '', window.location.pathname);
+      setGroupId(null);
+      setViewState('landing');
+    } catch (error) {
+      console.error('退出群組失敗:', error);
+      setAlertMsg('退出失敗，請稍後再試');
+    }
   };
 
   const handleCreateGroupConfirm = async () => {
@@ -328,30 +341,47 @@ export default function RoomieTaskApp() {
     setIsEditingConfig(true);
   };
 
-  // 🔥 核心修復：Atomic Save & Reschedule (含錯誤處理)
+  // ✅ 修復問題3和4: 編輯家事同步與儲存錯誤
   const saveConfig = async () => {
     try {
-      if (!configForm.name.trim()) { alert("請輸入家事名稱！"); return; }
-      if (configForm.price <= 0 || configForm.freq <= 0) { alert("金額與頻率必須大於 0！"); return; }
+      if (!configForm.name.trim()) { 
+        setFormError("請輸入家事名稱！"); 
+        return; 
+      }
+      if (configForm.price <= 0 || configForm.freq <= 0) { 
+        setFormError("金額與頻率必須大於 0！"); 
+        return; 
+      }
       
       let assigneeOrder = configForm.assigneeOrder;
       if (!assigneeOrder || assigneeOrder.length === 0) {
-        alert("請至少選擇一位排班人員！");
+        setFormError("請至少選擇一位排班人員！");
         return;
       }
 
+      setFormError('');
+
       const id = editingConfigId || `cfg-${generateId()}`;
-      const freqStr = typeof configForm.freq === 'string' ? configForm.freq : `每 ${configForm.freq} 天`;
       const freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '7');
 
       // 1. 清除舊任務 (若為編輯)
-      if (editingConfigId) await clearFutureTasks(id);
+      if (editingConfigId) {
+        await clearFutureTasks(id);
+      }
 
       // 2. 準備新資料
       const updates = {};
+      const freqStr = `每 ${freqNum} 天`;
+      
       const configData = { 
-        ...configForm, id, freq: freqStr, assigneeOrder, 
-        nextAssigneeId: assigneeOrder[0], nextDate: configForm.nextDate 
+        id,
+        name: configForm.name,
+        price: configForm.price,
+        icon: configForm.icon,
+        freq: freqStr,
+        assigneeOrder, 
+        nextAssigneeId: assigneeOrder[0], 
+        nextDate: configForm.nextDate 
       };
       updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
 
@@ -364,11 +394,17 @@ export default function RoomieTaskApp() {
       // ⚠️ 防死結: 強制最多產生 50 筆
       while (nextDate <= limitDate && loopCount < 50) {
           loopCount++;
-          const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
+          const tid = `task-${id}-${nextDate.replace(/-/g, '')}-${loopCount}`;
           
           updates[`groups/${groupId}/tasks/${tid}`] = {
-              id: tid, configId: id, name: configData.name, price: configData.price, icon: configData.icon,
-              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+              id: tid, 
+              configId: id, 
+              name: configData.name, 
+              price: configData.price, 
+              icon: configData.icon,
+              date: nextDate, 
+              status: 'pending', 
+              currentHolderId: runningAssigneeId
           };
 
           const currIdx = assigneeOrder.indexOf(runningAssigneeId);
@@ -389,8 +425,8 @@ export default function RoomieTaskApp() {
       setAlertMsg("排班已更新！");
 
     } catch (error) {
-      console.error(error);
-      alert("儲存失敗，請檢查網路連線");
+      console.error('儲存失敗:', error);
+      setFormError("儲存失敗，請檢查網路連線");
     }
   };
 
@@ -505,11 +541,12 @@ export default function RoomieTaskApp() {
         </div>
       </header>
 
+      {/* ✅ 修復問題2: 調整 sticky 定位，避免內容露出 */}
       <main className="flex-1 overflow-y-auto p-4 pb-24 overscroll-contain" ref={mainScrollRef}>
         {view === 'roster' && (
           <div className="space-y-6">
             <section>
-              <div className="sticky top-0 bg-gray-50 z-20 py-2 flex justify-between items-center mb-2 shadow-sm" onClick={() => setIsMyTasksCollapsed(!isMyTasksCollapsed)}>
+              <div className="sticky top-[-16px] bg-gray-50 z-20 py-3 flex justify-between items-center mb-2 cursor-pointer" onClick={() => setIsMyTasksCollapsed(!isMyTasksCollapsed)}>
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><CheckCircle2 size={20} className="text-[#28C8C8]"/> 近期待辦</h3>
                 {isMyTasksCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
               </div>
@@ -538,7 +575,7 @@ export default function RoomieTaskApp() {
             </section>
             
             <section>
-              <div className="sticky top-0 bg-gray-50 z-20 py-2 flex justify-between items-center mb-2 shadow-sm" onClick={() => setIsTaskListCollapsed(!isTaskListCollapsed)}>
+              <div className="sticky top-[-16px] bg-gray-50 z-20 py-3 flex justify-between items-center mb-2 cursor-pointer" onClick={() => setIsTaskListCollapsed(!isTaskListCollapsed)}>
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Users size={20}/> 任務列表</h3>
                 {isTaskListCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
               </div>
@@ -671,6 +708,7 @@ export default function RoomieTaskApp() {
                            assigneeOrder: c.assigneeOrder || users.map(u => u.id)
                          }); 
                          setIsEditingConfig(true); 
+                         setFormError('');
                       }}/>
                       <Trash2 size={20} className="text-red-500 cursor-pointer" onClick={() => setDeleteTarget({ type: 'config', id: c.id })}/>
                     </div>
@@ -752,10 +790,10 @@ export default function RoomieTaskApp() {
       {/* Edit Config Modal */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b pb-4">
               <h2 className="font-bold text-xl">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
-              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+              <button onClick={() => { setIsEditingConfig(false); setFormError(''); }} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
             </div>
             
             <div className="flex gap-4 relative">
