@@ -5,7 +5,7 @@ import { getDatabase, ref, onValue, set, update, serverTimestamp, remove } from 
 import { 
   Trash2, Sparkles, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
   CalendarDays, UserPlus, List, ChevronLeft, ChevronRight,
-  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, ArrowLeft
+  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home
 } from 'lucide-react';
 
 // ==========================================
@@ -34,28 +34,34 @@ const db = getDatabase(app);
 const getTodayString = () => new Date().toISOString().split('T')[0];
 const isFutureDate = (dateStr) => dateStr > getTodayString();
 const generateGroupId = () => `rm-${Math.random().toString(36).substr(2, 9)}`;
-
-// 日曆輔助
 const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
 const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay(); 
 
-// 本地儲存：管理已加入的群組
-const getSavedGroups = () => JSON.parse(localStorage.getItem('roomie_groups') || '[]');
-const saveGroupToLocal = (id, name) => {
-  const groups = getSavedGroups();
-  const existing = groups.find(g => g.id === id);
-  if (!existing) {
-    const newGroups = [...groups, { id, name, lastVisited: Date.now() }];
-    localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
-  } else {
-    // 更新訪問時間與名稱
-    const newGroups = groups.map(g => g.id === id ? { ...g, name, lastVisited: Date.now() } : g);
-    localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
-  }
+const getSavedGroups = () => {
+  try {
+    return JSON.parse(localStorage.getItem('roomie_groups') || '[]');
+  } catch (e) { return []; }
 };
+
+const saveGroupToLocal = (id, name) => {
+  try {
+    const groups = getSavedGroups();
+    const existing = groups.find(g => g.id === id);
+    if (!existing) {
+      const newGroups = [...groups, { id, name, lastVisited: Date.now() }];
+      localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+    } else {
+      const newGroups = groups.map(g => g.id === id ? { ...g, name, lastVisited: Date.now() } : g);
+      localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+    }
+  } catch (e) { console.error("Local storage error", e); }
+};
+
 const removeGroupFromLocal = (id) => {
-  const groups = getSavedGroups().filter(g => g.id !== id);
-  localStorage.setItem('roomie_groups', JSON.stringify(groups));
+  try {
+    const groups = getSavedGroups().filter(g => g.id !== id);
+    localStorage.setItem('roomie_groups', JSON.stringify(groups));
+  } catch (e) { console.error("Local storage error", e); }
 };
 
 // ==========================================
@@ -64,32 +70,26 @@ const removeGroupFromLocal = (id) => {
 
 export default function RoomieTaskApp() {
   const [loading, setLoading] = useState(true);
-  const [viewState, setViewState] = useState('landing'); // 'landing' (群組列表) | 'app' (群組內)
+  const [viewState, setViewState] = useState('landing'); 
   
   const [groupId, setGroupId] = useState(null);
   const [groupName, setGroupName] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   
-  // Data State
   const [users, setUsers] = useState([]);
   const [taskConfigs, setTaskConfigs] = useState([]);
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]);
   const [logs, setLogs] = useState([]);
 
-  // UI State
   const [view, setView] = useState('roster');
   const [rosterViewMode, setRosterViewMode] = useState('list');
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
   const [isTaskListOpen, setIsTaskListOpen] = useState(true);
   
-  // Calendar State
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
   const [calendarMonth, setCalendarMonth] = useState(new Date()); 
-
-  // Local Groups State
   const [myGroups, setMyGroups] = useState([]);
 
-  // Config Editor State
   const [isEditingConfig, setIsEditingConfig] = useState(false);
   const [editingConfigId, setEditingConfigId] = useState(null);
   const [configForm, setConfigForm] = useState({
@@ -115,11 +115,8 @@ export default function RoomieTaskApp() {
           avatar: profile.pictureUrl
         };
         setCurrentUser(lineUser);
-        
-        // 載入本地儲存的群組列表
         setMyGroups(getSavedGroups());
 
-        // 檢查網址是否有群組 ID
         const params = new URLSearchParams(window.location.search);
         const gId = params.get('g');
 
@@ -153,21 +150,21 @@ export default function RoomieTaskApp() {
         setUsers(data.users ? Object.values(data.users) : []);
         setTaskConfigs(data.taskConfigs ? Object.values(data.taskConfigs) : []);
         
+        // 防呆處理：確保 tasks 存在且 date 不為 undefined
         const tasksList = data.tasks ? Object.values(data.tasks) : [];
-        tasksList.sort((a, b) => a.date.localeCompare(b.date));
+        tasksList.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
         setCurrentCycleTasks(tasksList);
         
         const logsList = data.logs ? Object.values(data.logs) : [];
         setLogs(logsList.sort((a, b) => b.id - a.id));
 
-        // 儲存群組名稱與歷史紀錄
         const gName = data.metadata?.name || '未命名空間';
         setGroupName(gName);
         saveGroupToLocal(gId, gName);
-        setMyGroups(getSavedGroups()); // 更新列表狀態
+        setMyGroups(getSavedGroups());
 
         // 自動加入
-        if (!data.users || !data.users[user.id]) {
+        if (user && (!data.users || !data.users[user.id])) {
           registerNewMember(gId, user);
         }
         
@@ -175,7 +172,6 @@ export default function RoomieTaskApp() {
       } else {
         alert("找不到此群組，可能已被刪除");
         setViewState('landing');
-        // 清除網址參數
         window.history.replaceState({}, '', window.location.pathname);
       }
       setLoading(false);
@@ -185,7 +181,6 @@ export default function RoomieTaskApp() {
   const handleSwitchGroup = () => {
     setGroupId(null);
     setViewState('landing');
-    // 清除網址參數，回到列表
     window.history.pushState({}, '', window.location.pathname);
   };
 
@@ -199,22 +194,19 @@ export default function RoomieTaskApp() {
       metadata: { creator: currentUser.name, createdAt: serverTimestamp(), name: gName },
       users: { [currentUser.id]: { ...currentUser, balance: 0 } },
       taskConfigs: {},
+      tasks: {}, // 初始化空的 tasks 防止讀取錯誤
       logs: { [Date.now()]: { id: Date.now(), msg: `🏠 空間已建立`, type: 'info', time: new Date().toLocaleTimeString() } }
     };
 
     await set(groupRef, initialData);
-    enterGroup(newGid);
+    enterGroup(newGid, currentUser); // 確保傳入 currentUser
   };
 
   const handleQuitGroup = async () => {
-    if(!window.confirm("確定要退出此群組嗎？您的餘額紀錄將被保留，但您將從名單中移除。")) return;
-    
-    // 從 Firebase 移除用戶
+    if(!window.confirm("確定要退出此群組嗎？")) return;
     await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
-    // 從本地列表移除
     removeGroupFromLocal(groupId);
     setMyGroups(getSavedGroups());
-    
     handleSwitchGroup();
   };
 
@@ -240,10 +232,8 @@ export default function RoomieTaskApp() {
     const updates = {};
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'open';
     updates[`groups/${groupId}/tasks/${task.id}/currentHolderId`] = null;
-    
     const myCurrentBalance = users.find(u => u.id === currentUser.id)?.balance || 0;
     updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myCurrentBalance - task.price;
-
     await update(ref(db), updates);
     addLog(groupId, `💸 ${currentUser.name} 釋出 ${task.name} (賞金 $${task.price})`, 'warning');
   };
@@ -252,10 +242,8 @@ export default function RoomieTaskApp() {
     const updates = {};
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'pending';
     updates[`groups/${groupId}/tasks/${task.id}/currentHolderId`] = currentUser.id;
-    
     const myCurrentBalance = users.find(u => u.id === currentUser.id)?.balance || 0;
     updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myCurrentBalance + task.price;
-
     await update(ref(db), updates);
     addLog(groupId, `💰 ${currentUser.name} 接手了 ${task.name} 賺取 $${task.price}`, 'success');
   };
@@ -279,7 +267,6 @@ export default function RoomieTaskApp() {
     }
   };
 
-  // --- 設定相關 Action ---
   const saveConfig = async () => {
     if (!configForm.name) return;
     const configId = editingConfigId || `cfg-${Date.now()}`;
@@ -291,6 +278,18 @@ export default function RoomieTaskApp() {
     setIsEditingConfig(false);
     setEditingConfigId(null);
     addLog(groupId, `🛠️ 更新了規則: ${configForm.name}`, 'info');
+    
+    // 如果是新增規則，提示用戶是否要手動產生任務
+    if (!editingConfigId && window.confirm("規則已儲存！是否要立即產生這個任務？")) {
+       const taskId = `task-${configId}-${Date.now()}`;
+       await update(ref(db), {
+         [`groups/${groupId}/tasks/${taskId}`]: {
+            id: taskId, configId, name: configForm.name, price: configForm.price, 
+            icon: configForm.icon, date: getTodayString(), status: 'pending', 
+            currentHolderId: configForm.defaultAssigneeId
+         }
+       });
+    }
   };
 
   const deleteConfig = async (configId) => {
@@ -301,9 +300,15 @@ export default function RoomieTaskApp() {
   const openConfigEditor = (config = null) => {
     if (config) {
       setEditingConfigId(config.id);
+      // 安全解析頻率
+      let freqNum = 7;
+      if (config.freq && typeof config.freq === 'string') {
+        const match = config.freq.match(/\d+/);
+        if (match) freqNum = parseInt(match[0]);
+      }
       setConfigForm({
-        name: config.name, price: config.price, freq: parseInt(config.freq.match(/\d+/)[0]) || 7,
-        icon: config.icon, defaultAssigneeId: config.defaultAssigneeId || currentUser.id, nextDate: config.nextDate || getTodayString()
+        name: config.name, price: config.price, freq: freqNum,
+        icon: config.icon || '🧹', defaultAssigneeId: config.defaultAssigneeId || currentUser.id, nextDate: config.nextDate || getTodayString()
       });
     } else {
       setEditingConfigId(null);
@@ -407,8 +412,8 @@ export default function RoomieTaskApp() {
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-50 max-w-md mx-auto border-x overflow-hidden h-[100dvh]">
       <header className="flex-none bg-white px-4 py-4 border-b flex justify-between items-center z-10">
-        <div className="flex items-center gap-2" onClick={handleSwitchGroup}>
-           <button className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200"><ArrowLeft size={16}/></button>
+        <div className="flex items-center gap-2 cursor-pointer" onClick={handleSwitchGroup}>
+           <button className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200"><ChevronLeft size={20}/></button>
            <div>
              <h1 className="font-bold text-gray-800 text-lg leading-none">{groupName}</h1>
            </div>
@@ -424,8 +429,8 @@ export default function RoomieTaskApp() {
           <div className="space-y-4 animate-fade-in">
             {/* 模式切換 */}
             <div className="flex bg-gray-100 p-1 rounded-xl">
-              <button onClick={() => setRosterViewMode('list')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><List size={16}/> 清單</button>
-              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><CalendarDays size={16}/> 日曆</button>
+              <button onClick={() => setRosterViewMode('list')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><List size={16}/> 清單</button>
+              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><CalendarDays size={16}/> 日曆</button>
             </div>
 
             {/* 清單模式 (還原 V1) */}
@@ -456,7 +461,7 @@ export default function RoomieTaskApp() {
                                 </div>
                                 <div className="flex gap-2">
                                   <button onClick={() => releaseTaskToBounty(task)} className="w-14 py-1.5 rounded-lg text-xs font-bold text-gray-500 bg-gray-100">沒空</button>
-                                  <button disabled={isFutureDate(task.date)} onClick={() => completeTask(task)} className={`w-16 py-1.5 rounded-lg text-xs font-bold text-white ${isFutureDate(task.date) ? 'bg-gray-200' : 'bg-[#28C8C8]'}`}>完成</button>
+                                  <button disabled={isFutureDate(task.date || '')} onClick={() => completeTask(task)} className={`w-16 py-1.5 rounded-lg text-xs font-bold text-white ${isFutureDate(task.date || '') ? 'bg-gray-200' : 'bg-[#28C8C8]'}`}>完成</button>
                                 </div>
                               </div>
                             ))}
@@ -475,7 +480,8 @@ export default function RoomieTaskApp() {
                   {isTaskListOpen && (
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                        <div className="divide-y divide-gray-50">
-                         {currentCycleTasks.map(task => {
+                         {currentCycleTasks.length === 0 ? <div className="p-6 text-center text-gray-400 text-sm">沒有任務</div> :
+                          currentCycleTasks.map(task => {
                            const isMine = task.currentHolderId === currentUser?.id;
                            const isOpen = task.status === 'open';
                            const isDone = task.status === 'done';
@@ -507,7 +513,7 @@ export default function RoomieTaskApp() {
               </>
             )}
 
-            {/* 日曆模式 (還原 V1 並串接 Firebase 資料) */}
+            {/* 日曆模式 */}
             {rosterViewMode === 'calendar' && (
                <div>
                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-4">
@@ -598,7 +604,6 @@ export default function RoomieTaskApp() {
 
         {view === 'settings' && (
           <div className="space-y-6 animate-fade-in">
-             {/* 邀請卡 */}
              <div className="bg-white rounded-xl p-4 shadow-sm border">
                <div className="flex justify-between items-center mb-2">
                  <h3 className="font-bold text-gray-800">成員邀請</h3>
