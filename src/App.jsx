@@ -160,56 +160,68 @@ export default function RoomieTaskApp() {
   // 🚪 群組進出邏輯
   // ==========================================
 
-  const enterGroup = (gId, user = currentUser) => {
+  const enterGroup = async (gId, user = currentUser) => {
     if (!gId) return;
     setLoading(true);
     setGroupId(gId);
     
-    const groupRef = ref(db, `groups/${gId}`);
-    onValue(groupRef, (snapshot) => {
+    try {
+      const groupRef = ref(db, `groups/${gId}`);
+      
+      // 先用 get 做一次性讀取，確保畫面快點出來
+      const snapshot = await get(groupRef);
       const data = snapshot.val();
+      
       if (data) {
-        // 安全轉換數據
-        const safeUsers = data.users ? Object.values(data.users) : [];
-        const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs) : [];
-        const safeTasks = data.tasks ? Object.values(data.tasks) : [];
-        const safeLogs = data.logs ? Object.values(data.logs) : [];
-
-        // 排序任務，增加防呆 (防止 date 為 undefined 導致崩潰)
-        safeTasks.sort((a, b) => {
-          const dateA = a.date || '9999-99-99';
-          const dateB = b.date || '9999-99-99';
-          return dateA.localeCompare(dateB);
-        });
-
-        // 排序日誌
-        safeLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
-
-        setUsers(safeUsers);
-        setTaskConfigs(safeConfigs);
-        setCurrentCycleTasks(safeTasks);
-        setLogs(safeLogs);
-
-        const gName = data.metadata?.name || '未命名空間';
-        setGroupName(gName);
-        
-        // 只有在資料讀取成功後才存入 Local
-        saveGroupToLocal(gId, gName);
-        setMyGroups(getSavedGroups());
-
-        // 自動加入
-        if (user && user.id && (!data.users || !data.users[user.id])) {
-          registerNewMember(gId, user);
-        }
-        
-        setViewState('app');
+        processGroupData(data, user, gId);
       } else {
-        alert("找不到此群組，可能已被刪除");
+        alert("找不到此群組");
         setViewState('landing');
-        window.history.replaceState({}, '', window.location.pathname);
+        setLoading(false);
+        return;
       }
+
+      // 接著才開啟實時監聽，同步後續變動
+      onValue(groupRef, (snapshot) => {
+        const newData = snapshot.val();
+        if (newData) {
+          processGroupData(newData, user, gId);
+        }
+      });
+
+    } catch (error) {
+      console.error("Firebase 連線錯誤:", error);
+      alert("連線失敗，請檢查網路或 Firebase 規則");
       setLoading(false);
-    });
+    }
+  };
+
+  // 抽離出處理資料的邏輯，避免重複撰寫
+  const processGroupData = (data, user, gId) => {
+    const safeUsers = data.users ? Object.values(data.users) : [];
+    const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs) : [];
+    const safeTasks = data.tasks ? Object.values(data.tasks) : [];
+    const safeLogs = data.logs ? Object.values(data.logs) : [];
+
+    safeTasks.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    safeLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
+
+    setUsers(safeUsers);
+    setTaskConfigs(safeConfigs);
+    setCurrentCycleTasks(safeTasks);
+    setLogs(safeLogs);
+
+    const gName = data.metadata?.name || '未命名空間';
+    setGroupName(gName);
+    saveGroupToLocal(gId, gName);
+    setMyGroups(getSavedGroups());
+
+    if (user && user.id && (!data.users || !data.users[user.id])) {
+      registerNewMember(gId, user);
+    }
+    
+    setViewState('app');
+    setLoading(false);
   };
 
   const handleSwitchGroup = () => {
