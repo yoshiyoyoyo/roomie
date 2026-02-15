@@ -13,34 +13,21 @@ import {
 // ==========================================
 
 // 1. 若要啟用雲端同步，請將此設為 true，並確保上方 import 已取消註解
-const ENABLE_FIREBASE = false; 
-const LIFF_ID = "YOUR_LIFF_ID_HERE"; 
+const ENABLE_FIREBASE = true; 
+const LIFF_ID = "2009134573-7SuphV8b"; 
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
+  authDomain: "roomie-task.firebaseapp.com",
+  projectId: "roomie-task",
+  storageBucket: "roomie-task.firebasestorage.app",
+  messagingSenderId: "233849609695",
+  appId: "1:233849609695:web:0c76a4b9b40070cf22386a"
 };
 
 // ==========================================
 // 🛠️ 資料庫與工具初始化 (Mock & Utils)
 // ==========================================
-
-// 初始化 Firebase (防止重複初始化)
-let db;
-/*
-if (ENABLE_FIREBASE) {
-  try {
-    const app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-  } catch (e) {
-    console.log("Firebase 尚未設定或初始化失敗", e);
-  }
-}
-*/
 
 // 日期工具
 const getTodayString = () => new Date().toISOString().split('T')[0];
