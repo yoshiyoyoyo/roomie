@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import liff from '@line/liff';
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, push } from "firebase/database";
+import { getDatabase, ref, onValue, set, update, serverTimestamp, remove } from "firebase/database";
 import { 
-  Trash2, Sparkles, Wallet, Users, CheckCircle2, AlertCircle, Clock, 
-  Plus, ArrowRight, History, Settings, Edit2, Save, X, Play, 
-  CalendarDays, UserPlus, List, ChevronLeft, ChevronRight, User, 
-  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut
+  Trash2, Sparkles, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
+  CalendarDays, UserPlus, List, ChevronLeft, ChevronRight,
+  Calendar, ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, ArrowLeft
 } from 'lucide-react';
 
 // ==========================================
@@ -36,27 +35,61 @@ const getTodayString = () => new Date().toISOString().split('T')[0];
 const isFutureDate = (dateStr) => dateStr > getTodayString();
 const generateGroupId = () => `rm-${Math.random().toString(36).substr(2, 9)}`;
 
+// 日曆輔助
+const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay(); 
+
+// 本地儲存：管理已加入的群組
+const getSavedGroups = () => JSON.parse(localStorage.getItem('roomie_groups') || '[]');
+const saveGroupToLocal = (id, name) => {
+  const groups = getSavedGroups();
+  const existing = groups.find(g => g.id === id);
+  if (!existing) {
+    const newGroups = [...groups, { id, name, lastVisited: Date.now() }];
+    localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+  } else {
+    // 更新訪問時間與名稱
+    const newGroups = groups.map(g => g.id === id ? { ...g, name, lastVisited: Date.now() } : g);
+    localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+  }
+};
+const removeGroupFromLocal = (id) => {
+  const groups = getSavedGroups().filter(g => g.id !== id);
+  localStorage.setItem('roomie_groups', JSON.stringify(groups));
+};
+
 // ==========================================
 // 📱 主應用程式
 // ==========================================
 
 export default function RoomieTaskApp() {
   const [loading, setLoading] = useState(true);
-  const [isLandingPage, setIsLandingPage] = useState(false);
+  const [viewState, setViewState] = useState('landing'); // 'landing' (群組列表) | 'app' (群組內)
+  
   const [groupId, setGroupId] = useState(null);
+  const [groupName, setGroupName] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   
+  // Data State
   const [users, setUsers] = useState([]);
   const [taskConfigs, setTaskConfigs] = useState([]);
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]);
   const [logs, setLogs] = useState([]);
 
+  // UI State
   const [view, setView] = useState('roster');
   const [rosterViewMode, setRosterViewMode] = useState('list');
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
   const [isTaskListOpen, setIsTaskListOpen] = useState(true);
+  
+  // Calendar State
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
+  const [calendarMonth, setCalendarMonth] = useState(new Date()); 
 
-  // 編輯模式狀態
+  // Local Groups State
+  const [myGroups, setMyGroups] = useState([]);
+
+  // Config Editor State
   const [isEditingConfig, setIsEditingConfig] = useState(false);
   const [editingConfigId, setEditingConfigId] = useState(null);
   const [configForm, setConfigForm] = useState({
@@ -82,41 +115,20 @@ export default function RoomieTaskApp() {
           avatar: profile.pictureUrl
         };
         setCurrentUser(lineUser);
+        
+        // 載入本地儲存的群組列表
+        setMyGroups(getSavedGroups());
 
+        // 檢查網址是否有群組 ID
         const params = new URLSearchParams(window.location.search);
         const gId = params.get('g');
 
-        if (!gId) {
-          setIsLandingPage(true);
+        if (gId) {
+          enterGroup(gId, lineUser);
+        } else {
+          setViewState('landing');
           setLoading(false);
-          return;
         }
-
-        setGroupId(gId);
-
-        const groupRef = ref(db, `groups/${gId}`);
-        onValue(groupRef, (snapshot) => {
-          const data = snapshot.val();
-          if (data) {
-            setUsers(data.users ? Object.values(data.users) : []);
-            setTaskConfigs(data.taskConfigs ? Object.values(data.taskConfigs) : []);
-            
-            const tasksList = data.tasks ? Object.values(data.tasks) : [];
-            tasksList.sort((a, b) => a.date.localeCompare(b.date));
-            setCurrentCycleTasks(tasksList);
-            
-            // 日誌反向排序 (最新的在上面)
-            const logsList = data.logs ? Object.values(data.logs) : [];
-            setLogs(logsList.sort((a, b) => b.id - a.id));
-
-            if (!data.users || !data.users[lineUser.id]) {
-              registerNewMember(gId, lineUser);
-            }
-          } else {
-            setIsLandingPage(true);
-          }
-          setLoading(false);
-        });
 
       } catch (err) {
         console.error("Init Error:", err);
@@ -127,6 +139,86 @@ export default function RoomieTaskApp() {
   }, []);
 
   // ==========================================
+  // 🚪 群組進出邏輯
+  // ==========================================
+
+  const enterGroup = (gId, user = currentUser) => {
+    setLoading(true);
+    setGroupId(gId);
+    
+    const groupRef = ref(db, `groups/${gId}`);
+    onValue(groupRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setUsers(data.users ? Object.values(data.users) : []);
+        setTaskConfigs(data.taskConfigs ? Object.values(data.taskConfigs) : []);
+        
+        const tasksList = data.tasks ? Object.values(data.tasks) : [];
+        tasksList.sort((a, b) => a.date.localeCompare(b.date));
+        setCurrentCycleTasks(tasksList);
+        
+        const logsList = data.logs ? Object.values(data.logs) : [];
+        setLogs(logsList.sort((a, b) => b.id - a.id));
+
+        // 儲存群組名稱與歷史紀錄
+        const gName = data.metadata?.name || '未命名空間';
+        setGroupName(gName);
+        saveGroupToLocal(gId, gName);
+        setMyGroups(getSavedGroups()); // 更新列表狀態
+
+        // 自動加入
+        if (!data.users || !data.users[user.id]) {
+          registerNewMember(gId, user);
+        }
+        
+        setViewState('app');
+      } else {
+        alert("找不到此群組，可能已被刪除");
+        setViewState('landing');
+        // 清除網址參數
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+      setLoading(false);
+    });
+  };
+
+  const handleSwitchGroup = () => {
+    setGroupId(null);
+    setViewState('landing');
+    // 清除網址參數，回到列表
+    window.history.pushState({}, '', window.location.pathname);
+  };
+
+  const handleCreateGroup = async () => {
+    setLoading(true);
+    const newGid = generateGroupId();
+    const groupRef = ref(db, `groups/${newGid}`);
+    const gName = `${currentUser.name} 的家`;
+    
+    const initialData = {
+      metadata: { creator: currentUser.name, createdAt: serverTimestamp(), name: gName },
+      users: { [currentUser.id]: { ...currentUser, balance: 0 } },
+      taskConfigs: {},
+      logs: { [Date.now()]: { id: Date.now(), msg: `🏠 空間已建立`, type: 'info', time: new Date().toLocaleTimeString() } }
+    };
+
+    await set(groupRef, initialData);
+    enterGroup(newGid);
+  };
+
+  const handleQuitGroup = async () => {
+    if(!window.confirm("確定要退出此群組嗎？您的餘額紀錄將被保留，但您將從名單中移除。")) return;
+    
+    // 從 Firebase 移除用戶
+    await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
+    // 從本地列表移除
+    removeGroupFromLocal(groupId);
+    setMyGroups(getSavedGroups());
+    
+    handleSwitchGroup();
+  };
+
+  // ==========================================
   // ✍️ Firebase Actions
   // ==========================================
 
@@ -135,29 +227,6 @@ export default function RoomieTaskApp() {
       ...user, balance: 0, joinedAt: serverTimestamp()
     });
     addLog(gId, `👋 歡迎新室友 ${user.name} 加入！`, 'success');
-  };
-
-  const handleCreateGroup = async () => {
-    setLoading(true);
-    const newGid = generateGroupId();
-    const groupRef = ref(db, `groups/${newGid}`);
-    
-    const initialData = {
-      metadata: { creator: currentUser.name, createdAt: serverTimestamp() },
-      users: { [currentUser.id]: { ...currentUser, balance: 0 } },
-      taskConfigs: {}, // 初始為空，讓用戶自己加
-      logs: { [Date.now()]: { id: Date.now(), msg: `🏠 空間已由 ${currentUser.name} 建立`, type: 'info', time: new Date().toLocaleTimeString() } }
-    };
-
-    await set(groupRef, initialData);
-    // 使用 LIFF URL 跳轉，確保參數正確
-    window.location.href = `https://liff.line.me/${LIFF_ID}?g=${newGid}`;
-  };
-
-  const handleLeaveGroup = () => {
-    // 清除網址參數，回到 Landing Page
-    const liffUrl = `https://liff.line.me/${LIFF_ID}`;
-    window.location.href = liffUrl;
   };
 
   const completeTask = async (task) => {
@@ -202,7 +271,7 @@ export default function RoomieTaskApp() {
     const inviteLink = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
     if (liff.isApiAvailable('shareTargetPicker')) {
       await liff.shareTargetPicker([{
-        type: "text", text: `🏠 邀請你加入我們的家事值日生群組！\n點擊連結加入排班與記帳：\n${inviteLink}`
+        type: "text", text: `🏠 邀請你加入「${groupName}」！\n點擊連結加入排班與記帳：\n${inviteLink}`
       }]);
     } else {
       navigator.clipboard.writeText(inviteLink);
@@ -213,23 +282,19 @@ export default function RoomieTaskApp() {
   // --- 設定相關 Action ---
   const saveConfig = async () => {
     if (!configForm.name) return;
-    
     const configId = editingConfigId || `cfg-${Date.now()}`;
     const updates = {};
     updates[`groups/${groupId}/taskConfigs/${configId}`] = {
-      id: configId,
-      ...configForm,
-      freq: `每 ${configForm.freq} 天` // 存回字串格式以符合顯示
+      id: configId, ...configForm, freq: `每 ${configForm.freq} 天`
     };
-
     await update(ref(db), updates);
     setIsEditingConfig(false);
     setEditingConfigId(null);
-    addLog(groupId, `🛠️ ${currentUser.name} 更新了家事規則: ${configForm.name}`, 'info');
+    addLog(groupId, `🛠️ 更新了規則: ${configForm.name}`, 'info');
   };
 
   const deleteConfig = async (configId) => {
-    if(!window.confirm("確定要刪除這個規則嗎？")) return;
+    if(!window.confirm("確定刪除？")) return;
     await remove(ref(db, `groups/${groupId}/taskConfigs/${configId}`));
   };
 
@@ -237,50 +302,14 @@ export default function RoomieTaskApp() {
     if (config) {
       setEditingConfigId(config.id);
       setConfigForm({
-        name: config.name,
-        price: config.price,
-        freq: parseInt(config.freq.match(/\d+/)[0]) || 7, // 解析 "每 7 天" -> 7
-        icon: config.icon,
-        defaultAssigneeId: config.defaultAssigneeId || currentUser.id,
-        nextDate: config.nextDate || getTodayString()
+        name: config.name, price: config.price, freq: parseInt(config.freq.match(/\d+/)[0]) || 7,
+        icon: config.icon, defaultAssigneeId: config.defaultAssigneeId || currentUser.id, nextDate: config.nextDate || getTodayString()
       });
     } else {
       setEditingConfigId(null);
       setConfigForm({ name: '', price: 30, freq: 7, icon: '🧹', defaultAssigneeId: currentUser.id, nextDate: getTodayString() });
     }
     setIsEditingConfig(true);
-  };
-
-  // 手動產生任務 (基於 Config) - 這是簡易版排班器
-  const generateTasksFromConfig = async () => {
-    if(taskConfigs.length === 0) return alert("請先設定家事規則！");
-    if(!window.confirm("確定要根據規則產生下週任務嗎？")) return;
-
-    const updates = {};
-    const newTasks = [];
-
-    taskConfigs.forEach(cfg => {
-       const taskId = `task-${cfg.id}-${Date.now()}`; // 簡單 ID
-       const days = parseInt(cfg.freq.match(/\d+/)[0]) || 7;
-       
-       // 找出下一個輪值的人 (這裡是簡化版，隨機或依序)
-       // 真實排班需要紀錄上次是誰，這裡先用 default
-       const assigneeId = cfg.defaultAssigneeId;
-
-       updates[`groups/${groupId}/tasks/${taskId}`] = {
-         id: taskId,
-         configId: cfg.id,
-         name: cfg.name,
-         price: cfg.price,
-         icon: cfg.icon,
-         date: getTodayString(), // 預設產生今天的
-         status: 'pending',
-         currentHolderId: assigneeId
-       };
-    });
-
-    await update(ref(db), updates);
-    addLog(groupId, `📅 ${currentUser.name} 產生了新的排班任務`, 'info');
   };
 
   // ==========================================
@@ -294,49 +323,76 @@ export default function RoomieTaskApp() {
     </div>
   );
 
-  if (isLandingPage) return (
-    <div className="flex flex-col items-center justify-center h-[100dvh] p-8 bg-white text-center">
-      <div className="w-24 h-24 bg-[#28C8C8]/10 rounded-full flex items-center justify-center mb-8 animate-bounce">
-        <Sparkles size={48} className="text-[#28C8C8]" />
+  // 1️⃣ Landing View: 我的群組列表
+  if (viewState === 'landing') return (
+    <div className="flex flex-col h-[100dvh] bg-gray-50 max-w-md mx-auto border-x">
+      <div className="p-8 bg-white border-b shadow-sm">
+        <h1 className="text-2xl font-bold text-gray-800">👋 嗨，{currentUser?.name}</h1>
+        <p className="text-gray-500 text-sm mt-1">選擇一個空間開始管理家事</p>
       </div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-4">Roomie Task</h1>
-      <p className="text-gray-500 mb-10 leading-relaxed">建立空間並邀請室友，開始自動排班與獎勵機制。</p>
-      <button onClick={handleCreateGroup} className="w-full max-w-xs py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 flex items-center justify-center gap-2">
-        <Plus size={20} /> 建立新空間
-      </button>
+      
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {myGroups.length === 0 ? (
+          <div className="text-center py-10 opacity-50">
+            <Sparkles size={48} className="mx-auto text-gray-300 mb-4"/>
+            <p>你還沒加入任何群組</p>
+          </div>
+        ) : (
+          myGroups.map(g => (
+            <div key={g.id} onClick={() => enterGroup(g.id)} className="bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-[#28C8C8] transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-[#28C8C8]">
+                  <Home size={20}/>
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800">{g.name}</h3>
+                  <p className="text-xs text-gray-400">上次訪問: {new Date(g.lastVisited).toLocaleDateString()}</p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-gray-300"/>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="p-4 bg-white border-t">
+        <button onClick={handleCreateGroup} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+          <UserPlus size={20} /> 建立新空間
+        </button>
+      </div>
     </div>
   );
 
   // 編輯器 Modal
   if (isEditingConfig) return (
-    <div className="fixed inset-0 bg-white z-50 flex flex-col animate-slide-up">
-      <div className="p-4 border-b flex justify-between items-center">
+    <div className="fixed inset-0 bg-white z-50 flex flex-col animate-slide-up max-w-md mx-auto">
+      <div className="p-4 border-b flex justify-between items-center bg-gray-50">
         <h2 className="font-bold text-lg">{editingConfigId ? '編輯規則' : '新增規則'}</h2>
-        <button onClick={() => setIsEditingConfig(false)}><X size={24} /></button>
+        <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-white rounded-full"><X size={20} /></button>
       </div>
       <div className="p-6 space-y-6 flex-1 overflow-y-auto">
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-2">名稱與圖示</label>
           <div className="flex gap-2">
-             <input type="text" value={configForm.icon} onChange={e => setConfigForm({...configForm, icon: e.target.value})} className="w-12 h-12 text-center text-2xl border rounded-lg" />
-             <input type="text" placeholder="例如：倒垃圾" value={configForm.name} onChange={e => setConfigForm({...configForm, name: e.target.value})} className="flex-1 px-4 border rounded-lg" />
+             <input type="text" value={configForm.icon} onChange={e => setConfigForm({...configForm, icon: e.target.value})} className="w-14 h-12 text-center text-2xl border border-gray-300 rounded-xl" />
+             <input type="text" placeholder="例如：倒垃圾" value={configForm.name} onChange={e => setConfigForm({...configForm, name: e.target.value})} className="flex-1 px-4 border border-gray-300 rounded-xl" />
           </div>
         </div>
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-2">賞金 (NT$)</label>
-          <input type="number" value={configForm.price} onChange={e => setConfigForm({...configForm, price: Number(e.target.value)})} className="w-full px-4 py-3 border rounded-lg text-lg font-mono" />
+          <input type="number" value={configForm.price} onChange={e => setConfigForm({...configForm, price: Number(e.target.value)})} className="w-full px-4 py-3 border border-gray-300 rounded-xl text-lg font-mono" />
         </div>
         <div>
            <label className="block text-sm font-bold text-gray-700 mb-2">頻率 (天)</label>
-           <div className="flex items-center gap-2">
+           <div className="flex items-center gap-3">
              <span>每</span>
-             <input type="number" value={configForm.freq} onChange={e => setConfigForm({...configForm, freq: Number(e.target.value)})} className="w-20 text-center py-2 border rounded-lg" />
+             <input type="number" value={configForm.freq} onChange={e => setConfigForm({...configForm, freq: Number(e.target.value)})} className="w-24 text-center py-2 border border-gray-300 rounded-xl font-bold" />
              <span>天一次</span>
            </div>
         </div>
         <div>
            <label className="block text-sm font-bold text-gray-700 mb-2">預設負責人</label>
-           <select value={configForm.defaultAssigneeId} onChange={e => setConfigForm({...configForm, defaultAssigneeId: e.target.value})} className="w-full px-4 py-3 border rounded-lg bg-white">
+           <select value={configForm.defaultAssigneeId} onChange={e => setConfigForm({...configForm, defaultAssigneeId: e.target.value})} className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white">
              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
            </select>
         </div>
@@ -347,15 +403,18 @@ export default function RoomieTaskApp() {
     </div>
   );
 
+  // 2️⃣ App View: 群組內部
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-50 max-w-md mx-auto border-x overflow-hidden h-[100dvh]">
       <header className="flex-none bg-white px-4 py-4 border-b flex justify-between items-center z-10">
-        <div>
-           <h1 className="font-bold text-gray-800 text-lg">家事值日生</h1>
-           <span className="text-[10px] text-gray-400 font-mono">ID: {groupId.split('-')[1]}</span>
+        <div className="flex items-center gap-2" onClick={handleSwitchGroup}>
+           <button className="p-1.5 rounded-full bg-gray-100 hover:bg-gray-200"><ArrowLeft size={16}/></button>
+           <div>
+             <h1 className="font-bold text-gray-800 text-lg leading-none">{groupName}</h1>
+           </div>
         </div>
         <div className="flex items-center gap-2 bg-gray-100 rounded-full pl-1 pr-3 py-1">
-          <img src={currentUser?.avatar} className="w-6 h-6 rounded-full" alt="me" />
+          <img src={currentUser?.avatar} className="w-6 h-6 rounded-full border border-white" alt="me" />
           <span className="text-xs font-bold text-gray-700 truncate max-w-[80px]">{currentUser?.name}</span>
         </div>
       </header>
@@ -363,67 +422,145 @@ export default function RoomieTaskApp() {
       <main className="flex-1 overflow-y-auto p-4 space-y-6 pb-24">
         {view === 'roster' && (
           <div className="space-y-4 animate-fade-in">
-            <div className="bg-gradient-to-r from-[#28C8C8] to-[#20a0a0] rounded-2xl p-4 text-white shadow-lg mb-2 flex justify-between items-center">
-              <div><h3 className="font-bold">邀請室友</h3><p className="text-xs opacity-80">讓大家加入此群組</p></div>
-              <button onClick={shareInvite} className="bg-white text-[#28C8C8] p-2 rounded-full"><UserPlus size={20}/></button>
-            </div>
-
+            {/* 模式切換 */}
             <div className="flex bg-gray-100 p-1 rounded-xl">
-              <button onClick={() => setRosterViewMode('list')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}>清單</button>
-              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}>日曆</button>
+              <button onClick={() => setRosterViewMode('list')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><List size={16}/> 清單</button>
+              <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500'}`}><CalendarDays size={16}/> 日曆</button>
             </div>
 
+            {/* 清單模式 (還原 V1) */}
             {rosterViewMode === 'list' && (
               <>
+                {/* 我的待辦 */}
                 <div>
-                  <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2"><CheckCircle2 size={18} className="text-[#28C8C8]"/> 我的待辦</h3>
-                  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    {currentCycleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending').length === 0 ? 
-                      <div className="p-6 text-center text-gray-400 text-sm">無待辦事項 🎉</div> : 
-                      currentCycleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending').map(task => (
-                        <div key={task.id} className="p-4 flex items-center justify-between border-b last:border-0">
-                          <div className="flex items-center gap-3">
-                            <span className="text-2xl">{task.icon}</span>
-                            <div><h4 className="font-bold text-gray-800 text-sm">{task.name}</h4><span className="text-[10px] bg-red-100 text-red-500 px-1 rounded">{task.date}</span></div>
-                          </div>
-                          <div className="flex gap-2">
-                            <button onClick={() => releaseTaskToBounty(task)} className="px-3 py-1 bg-gray-100 text-xs font-bold rounded text-gray-500">沒空</button>
-                            <button onClick={() => completeTask(task)} className="px-3 py-1 bg-[#28C8C8] text-xs font-bold rounded text-white">完成</button>
-                          </div>
-                        </div>
-                      ))
-                    }
+                  <div className="flex justify-between items-end mb-3 cursor-pointer group" onClick={() => setIsMyTasksOpen(!isMyTasksOpen)}>
+                    <h3 className="font-bold text-gray-700 flex items-center gap-2"><CheckCircle2 size={18} className="text-[#28C8C8]"/> 我的待辦 {isMyTasksOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</h3>
                   </div>
+                  {isMyTasksOpen && (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                      {(() => {
+                        const myTasks = currentCycleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
+                        if (myTasks.length === 0) return <div className="p-6 text-center text-gray-400 text-sm">無待辦事項 🎉</div>;
+                        return (
+                          <div className="divide-y divide-gray-50">
+                            {myTasks.map(task => (
+                              <div key={task.id} className="p-4 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 bg-[#28C8C8]/10 rounded-full flex items-center justify-center text-xl shrink-0">{task.icon}</div>
+                                  <div>
+                                    <h4 className="font-bold text-gray-800">{task.name}</h4>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className={`text-xs px-1.5 rounded font-mono ${task.date === getTodayString() ? 'bg-red-100 text-red-500 font-bold' : 'bg-gray-100 text-gray-500'}`}>{task.date === getTodayString() ? '今天' : task.date}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button onClick={() => releaseTaskToBounty(task)} className="w-14 py-1.5 rounded-lg text-xs font-bold text-gray-500 bg-gray-100">沒空</button>
+                                  <button disabled={isFutureDate(task.date)} onClick={() => completeTask(task)} className={`w-16 py-1.5 rounded-lg text-xs font-bold text-white ${isFutureDate(task.date) ? 'bg-gray-200' : 'bg-[#28C8C8]'}`}>完成</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
+                {/* 任務列表 */}
                 <div>
-                  <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2"><Users size={18} className="text-gray-400"/> 任務列表</h3>
-                  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    {currentCycleTasks.map(task => {
-                      const isOpen = task.status === 'open';
-                      const isDone = task.status === 'done';
-                      return (
-                        <div key={task.id} className={`p-4 flex items-center justify-between border-b last:border-0 ${isOpen ? 'bg-red-50' : ''}`}>
-                          <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? 'opacity-30' : 'bg-gray-50'}`}>{task.icon}</div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h4 className={`font-bold text-sm ${isDone ? 'line-through text-gray-300' : 'text-gray-800'}`}>{task.name}</h4>
-                                {isOpen && <span className="text-[10px] bg-red-500 text-white px-1 rounded animate-pulse">賞金</span>}
-                              </div>
-                              <span className="text-[10px] text-gray-400">{task.date}</span>
-                            </div>
-                          </div>
-                          {isOpen ? <button onClick={() => claimBountyTask(task)} className="bg-red-500 text-white px-2 py-1 rounded text-xs font-bold">接單 +${task.price}</button> : isDone ? <CheckCircle2 className="text-green-300" size={18}/> : null}
-                        </div>
-                      )
-                    })}
+                   <div className="flex justify-between items-end mb-3 cursor-pointer group" onClick={() => setIsTaskListOpen(!isTaskListOpen)}>
+                    <h3 className="font-bold text-gray-700 flex items-center gap-2"><Users size={18} className="text-gray-400"/> 任務列表 {isTaskListOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</h3>
                   </div>
+                  {isTaskListOpen && (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                       <div className="divide-y divide-gray-50">
+                         {currentCycleTasks.map(task => {
+                           const isMine = task.currentHolderId === currentUser?.id;
+                           const isOpen = task.status === 'open';
+                           const isDone = task.status === 'done';
+                           return (
+                             <div key={task.id} className={`p-4 flex items-center justify-between ${isOpen ? 'bg-red-50' : ''}`}>
+                               <div className="flex items-center gap-4">
+                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 ${isDone ? 'bg-green-100 opacity-50' : 'bg-gray-100'}`}>{task.icon}</div>
+                                 <div>
+                                   <div className="flex items-center gap-2">
+                                     <h4 className={`font-bold ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{task.name}</h4>
+                                     {isOpen && <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold animate-pulse">釋出中</span>}
+                                   </div>
+                                   <div className="flex items-center gap-2 mt-1">
+                                     <span className="text-xs bg-gray-100 px-1.5 rounded text-gray-500 font-mono">{task.date}</span>
+                                     {!isDone && !isOpen && <span className={`text-xs ${isMine ? 'text-[#28C8C8] font-bold' : 'text-gray-500'}`}>{users.find(u => u.id === task.currentHolderId)?.name || '未知'}</span>}
+                                   </div>
+                                 </div>
+                               </div>
+                               <div>
+                                 {isOpen ? <button onClick={() => claimBountyTask(task)} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold">接單 +${task.price}</button> : isDone ? <CheckCircle2 className="text-green-300" size={24}/> : isMine ? <div className="w-8 h-8 rounded-full border-2 border-[#28C8C8]/30 flex items-center justify-center text-[#28C8C8]"><CheckCircle2 size={18}/></div> : null}
+                               </div>
+                             </div>
+                           )
+                         })}
+                       </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}
-            
-            {rosterViewMode === 'calendar' && <div className="text-center py-20 text-gray-400 text-sm">日曆功能開發中...</div>}
+
+            {/* 日曆模式 (還原 V1 並串接 Firebase 資料) */}
+            {rosterViewMode === 'calendar' && (
+               <div>
+                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-4">
+                   <div className="flex items-center justify-between mb-4">
+                     <button onClick={() => { const d = new Date(calendarMonth); d.setMonth(d.getMonth() - 1); setCalendarMonth(d); }} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft size={20} /></button>
+                     <h3 className="font-bold text-lg text-gray-800">{calendarMonth.getFullYear()}年 {calendarMonth.getMonth() + 1}月</h3>
+                     <button onClick={() => { const d = new Date(calendarMonth); d.setMonth(d.getMonth() + 1); setCalendarMonth(d); }} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></button>
+                   </div>
+                   <div className="grid grid-cols-7 text-center mb-2">
+                     {['日', '一', '二', '三', '四', '五', '六'].map(d => <span key={d} className="text-xs font-bold text-gray-400">{d}</span>)}
+                   </div>
+                   <div className="grid grid-cols-7 gap-1">
+                     {Array.from({ length: getDaysInMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) + getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth()) }).map((_, i) => {
+                       const firstDay = getFirstDayOfMonth(calendarMonth.getFullYear(), calendarMonth.getMonth());
+                       if (i < firstDay) return <div key={`empty-${i}`} className="aspect-square"></div>;
+                       const day = i - firstDay + 1;
+                       const dateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                       const isSelected = dateStr === calendarSelectedDate;
+                       const dayTasks = currentCycleTasks.filter(t => t.date === dateStr);
+                       return (
+                         <div key={day} onClick={() => setCalendarSelectedDate(dateStr)} className={`aspect-square rounded-lg flex flex-col items-center justify-center cursor-pointer border ${isSelected ? 'border-[#28C8C8] bg-[#28C8C8]/10' : 'border-transparent hover:bg-gray-50'}`}>
+                           <span className={`text-sm ${isSelected ? 'font-bold text-[#28C8C8]' : 'text-gray-700'}`}>{day}</span>
+                           <div className="flex gap-0.5 mt-1">
+                             {dayTasks.slice(0, 3).map((t, idx) => <div key={idx} className={`w-1.5 h-1.5 rounded-full ${t.status === 'done' ? 'bg-green-300' : t.status === 'open' ? 'bg-red-500' : 'bg-[#28C8C8]/50'}`}></div>)}
+                           </div>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 </div>
+                 
+                 <div>
+                   <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2">📅 {calendarSelectedDate} 的任務</h4>
+                   <div className="space-y-3">
+                     {currentCycleTasks.filter(t => t.date === calendarSelectedDate).length === 0 ? 
+                       <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-400 text-sm border border-dashed">今日無任務</div> : 
+                       currentCycleTasks.filter(t => t.date === calendarSelectedDate).map(task => {
+                         const isDone = task.status === 'done';
+                         return (
+                           <div key={task.id} className="bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between">
+                             <div className="flex items-center gap-3">
+                               <span className="text-2xl">{task.icon}</span>
+                               <h5 className={`font-bold ${isDone ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.name}</h5>
+                             </div>
+                             {isDone ? <CheckCircle2 className="text-green-400" size={20}/> : <span className="text-xs text-gray-400">未完成</span>}
+                           </div>
+                         )
+                       })
+                     }
+                   </div>
+                 </div>
+               </div>
+            )}
           </div>
         )}
 
@@ -461,6 +598,15 @@ export default function RoomieTaskApp() {
 
         {view === 'settings' && (
           <div className="space-y-6 animate-fade-in">
+             {/* 邀請卡 */}
+             <div className="bg-white rounded-xl p-4 shadow-sm border">
+               <div className="flex justify-between items-center mb-2">
+                 <h3 className="font-bold text-gray-800">成員邀請</h3>
+                 <button onClick={shareInvite} className="text-xs bg-[#28C8C8] text-white px-3 py-1.5 rounded-full font-bold">傳送連結</button>
+               </div>
+               <p className="text-xs text-gray-400">目前成員: {users.length} 人</p>
+             </div>
+
              <div className="bg-white rounded-xl p-4 shadow-sm border">
                <div className="flex justify-between items-center mb-4">
                  <h3 className="font-bold text-gray-800 flex items-center gap-2"><Settings size={18}/> 家事規則</h3>
@@ -482,16 +628,15 @@ export default function RoomieTaskApp() {
                    ))
                  }
                </div>
-               <button onClick={generateTasksFromConfig} className="w-full mt-4 py-2 border border-dashed border-gray-300 text-gray-500 text-xs rounded-lg hover:border-[#28C8C8] hover:text-[#28C8C8] flex items-center justify-center gap-1">
-                 <Play size={12}/> 手動產生本週任務 (測試用)
-               </button>
              </div>
 
-             <div className="text-center pt-8 pb-4">
-               <button onClick={handleLeaveGroup} className="text-gray-400 text-xs underline flex items-center justify-center gap-1 w-full hover:text-red-500">
-                 <LogOut size={12}/> 離開此群組 (建立新群組)
+             <div className="space-y-3 pt-4">
+               <button onClick={handleSwitchGroup} className="w-full py-3 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold text-sm shadow-sm flex items-center justify-center gap-2">
+                 <List size={16}/> 切換群組 (回到列表)
                </button>
-               <p className="text-[10px] text-gray-300 mt-2">Group ID: {groupId}</p>
+               <button onClick={handleQuitGroup} className="w-full py-3 bg-white border border-red-100 text-red-500 rounded-xl font-bold text-sm shadow-sm flex items-center justify-center gap-2">
+                 <LogOut size={16}/> 退出此群組
+               </button>
              </div>
           </div>
         )}
