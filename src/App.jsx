@@ -120,21 +120,23 @@ const mockLiff = {
 // ==========================================
 
 export default function RoomieTaskApp() {
-  // --- State ---
+  // --- Data State ---
   const [users, setUsers] = useState(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState(INITIAL_USERS[0]); 
-  
-  // 任務相關 State
   const [taskConfigs, setTaskConfigs] = useState(INITIAL_TASK_CONFIG); 
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]); 
   const [logs, setLogs] = useState([]); 
   
+  // --- UI State ---
+  // 修改：只存 ID，currentUser 改為動態計算，確保資料同步
+  const [currentUserId, setCurrentUserId] = useState(INITIAL_USERS[0].id);
+  const currentUser = users.find(u => u.id === currentUserId) || users[0];
+
   const [view, setView] = useState('roster'); 
   const [rosterViewMode, setRosterViewMode] = useState('list'); 
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
   const [calendarMonth, setCalendarMonth] = useState(new Date()); 
   
-  // 1. 分頁狀態 (Load More) - 修改預設值為 3
+  // 1. 分頁狀態 (Load More)
   const [visibleMyTasksCount, setVisibleMyTasksCount] = useState(3);
   const [visibleAllTasksCount, setVisibleAllTasksCount] = useState(3);
   
@@ -164,20 +166,15 @@ export default function RoomieTaskApp() {
 
   // --- 初始化模擬數據 ---
   useEffect(() => {
-    if (!users.find(u => u.id === currentUser?.id) && users.length > 0) {
-      setCurrentUser(users[0]);
+    // 確保 ID 有效
+    if (!users.find(u => u.id === currentUserId) && users.length > 0) {
+      setCurrentUserId(users[0].id);
     }
 
     if (currentCycleTasks.length === 0 && users.length > 0) {
       dispatchTasksFromConfig(); 
     }
   }, [users.length]);
-
-  useEffect(() => {
-    if (users.length > 0 && (!currentUser || !users.find(u => u.id === currentUser.id))) {
-      setCurrentUser(users[0]);
-    }
-  }, [users]);
 
   // --- 核心邏輯 ---
 
@@ -221,7 +218,7 @@ export default function RoomieTaskApp() {
     generatedTasks.sort((a, b) => a.date.localeCompare(b.date));
 
     setCurrentCycleTasks(generatedTasks);
-    // 重置分頁計數 - 修改預設值為 3
+    // 重置分頁計數
     setVisibleMyTasksCount(3);
     setVisibleAllTasksCount(3);
     setView('roster');
@@ -484,6 +481,7 @@ export default function RoomieTaskApp() {
           </div>
         </div>
         
+        {/* User Selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500 font-medium">我是</span>
           <div className="flex items-center gap-2 bg-gray-100 rounded-full px-2 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
@@ -492,8 +490,8 @@ export default function RoomieTaskApp() {
                 <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border border-gray-200`}></div>
                 <select 
                   className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-1 cursor-pointer"
-                  value={currentUser.id}
-                  onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
+                  value={currentUserId}
+                  onChange={(e) => setCurrentUserId(e.target.value)}
                 >
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
@@ -770,64 +768,30 @@ export default function RoomieTaskApp() {
                   </h4>
                   
                   <div className="space-y-3">
-                    {currentCycleTasks.filter(t => t.date === calendarSelectedDate).length === 0 ? (
-                      <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-400 text-sm border border-dashed border-gray-200">
-                        這一天沒有安排任何任務 😴
-                      </div>
-                    ) : (
+                    {currentCycleTasks.filter(t => t.date === calendarSelectedDate).length === 0 ? <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-400 text-sm border border-dashed border-gray-200">這一天沒有安排任何任務 😴</div> : 
                       currentCycleTasks.filter(t => t.date === calendarSelectedDate).map(task => {
                         const isMine = task.currentHolderId === currentUser?.id;
                         const isOpen = task.status === 'open';
                         const isDone = task.status === 'done';
                         const isTaskFuture = isFutureDate(task.date);
-
                         return (
                           <div key={task.id} className={`bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between ${isDone ? 'opacity-70' : ''}`}>
                             <div className="flex items-center gap-3">
                               <span className="text-2xl">{task.icon}</span>
                               <div>
                                 <h5 className={`font-bold ${isDone ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.name}</h5>
-                                {!isDone && (
-                                  <div className="flex items-center gap-2 mt-1">
-                                    {isOpen ? (
-                                      <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold">急救中 ${task.price}</span>
-                                    ) : (
-                                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                                        <div className={`w-3 h-3 rounded-full ${getUserAvatar(task.currentHolderId)}`}></div>
-                                        {getUserName(task.currentHolderId)}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                {!isDone && (<div className="flex items-center gap-2 mt-1">{isOpen ? <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold">急救中 ${task.price}</span> : <div className="flex items-center gap-1 text-xs text-gray-500"><div className={`w-3 h-3 rounded-full ${getUserAvatar(task.currentHolderId)}`}></div>{getUserName(task.currentHolderId)}</div>}</div>)}
                               </div>
                             </div>
-                            
                             <div>
-                              {isOpen && (
-                                <button onClick={() => claimBounty(task.id)} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">接單</button>
-                              )}
-                              {!isOpen && !isDone && isMine && (
-                                <div className="flex gap-2">
-                                  <button onClick={() => releaseTask(task.id)} className="text-xs text-gray-400 underline">釋出</button>
-                                  <button 
-                                    onClick={() => completeTask(task.id)} 
-                                    disabled={isTaskFuture}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors 
-                                      ${isTaskFuture 
-                                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
-                                        : 'bg-[#28C8C8] hover:bg-[#20a0a0] text-white'
-                                      }`}
-                                  >
-                                    {isTaskFuture ? '未開放' : '完成'}
-                                  </button>
-                                </div>
-                              )}
+                              {isOpen && <button onClick={() => claimBounty(task.id)} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">接單</button>}
+                              {!isOpen && !isDone && isMine && (<div className="flex gap-2"><button onClick={() => releaseTask(task.id)} className="text-xs text-gray-400 underline">釋出</button><button onClick={() => completeTask(task.id)} disabled={isTaskFuture} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isTaskFuture ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#28C8C8] hover:bg-[#20a0a0] text-white'}`}>{isTaskFuture ? '未開放' : '完成'}</button></div>)}
                               {isDone && <CheckCircle2 className="text-green-400" size={20} />}
                             </div>
                           </div>
                         )
                       })
-                    )}
+                    }
                   </div>
                 </div>
               </div>
@@ -847,14 +811,13 @@ export default function RoomieTaskApp() {
              <div className="bg-gradient-to-br from-[#28C8C8] to-[#1facac] rounded-2xl p-6 text-white shadow-xl mb-6">
                <div className="flex justify-between items-start">
                  <div>
-                   <p className="text-white/80 text-sm mb-1">我的本月收支</p>
+                   <p className="text-white/80 text-sm mb-1">目前結餘</p>
                    <h2 className={`text-4xl font-bold font-mono text-white`}>
                      {currentUser.balance > 0 ? '+' : ''}{currentUser.balance}
                    </h2>
                  </div>
                  <div className="bg-white/20 p-2 rounded-lg"><Wallet className="text-white" /></div>
                </div>
-               <p className="text-xs text-white/70 mt-4 pt-4 border-t border-white/20">* 正數代表月底你會「收到」錢<br/>* 負數代表月底你要「支付」錢</p>
              </div>
 
              {/* 確保結算建議顯示 */}
@@ -1047,9 +1010,7 @@ export default function RoomieTaskApp() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-                  <User size={16} /> 起始負責人 (誰先開始)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2"><User size={16} /> 誰先開始</label>
                 <div className="relative">
                   <select 
                     value={editForm.defaultAssigneeId} 
@@ -1143,8 +1104,8 @@ export default function RoomieTaskApp() {
         <nav className="bg-white border-t flex justify-around pb-safe pt-1 sticky bottom-0 z-10 shrink-0">
           <TabButton id="roster" label="值日表" icon={CalendarDays} />
           <TabButton id="wallet" label="帳本" icon={Wallet} />
-          <TabButton id="settings" label="設定" icon={Settings} />
           <TabButton id="history" label="動態" icon={History} />
+          <TabButton id="settings" label="設定" icon={Settings} />
         </nav>
       )}
 
