@@ -18,10 +18,12 @@ const LIFF_ID = "2009134573-7SuphV8b";
 const firebaseConfig = {
   apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
   authDomain: "roomie-task.firebaseapp.com",
+  databaseURL: "https://roomie-task-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "roomie-task",
   storageBucket: "roomie-task.firebasestorage.app",
   messagingSenderId: "233849609695",
   appId: "1:233849609695:web:0c76a4b9b40070cf22386a"
+};
 };
 
 // Initialize Firebase
