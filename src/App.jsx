@@ -7,27 +7,42 @@ import {
   User, Calendar, ChevronDown, ChevronUp, ClipboardList, Check, Loader2
 } from 'lucide-react';
 
+// --- 第三方套件引入 ---
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, onSnapshot, updateDoc } from "firebase/firestore";
+import liff from "@line/liff";
 
 // ==========================================
 // ⚙️ 系統設定區 (System Config)
 // ==========================================
 
-// 1. 若要啟用雲端同步，請將此設為 true，並確保上方 import 已取消註解
 const ENABLE_FIREBASE = true; 
-const LIFF_ID = "2009134573-7SuphV8b"; 
+
+const LIFF_ID = "YOUR_LIFF_ID_HERE"; // 請填入您的 LIFF ID
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
-  authDomain: "roomie-task.firebaseapp.com",
-  projectId: "roomie-task",
-  storageBucket: "roomie-task.firebasestorage.app",
-  messagingSenderId: "233849609695",
-  appId: "1:233849609695:web:0c76a4b9b40070cf22386a"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 
 // ==========================================
-// 🛠️ 資料庫與工具初始化 (Mock & Utils)
+// 🛠️ 資料庫與工具初始化
 // ==========================================
+
+// 初始化 Firebase
+let db;
+if (ENABLE_FIREBASE) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Firebase 初始化失敗:", e);
+  }
+}
 
 // 日期工具
 const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -40,15 +55,14 @@ const isFutureDate = (dateStr) => dateStr > getTodayString();
 const formatDate = (dateObj) => `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
 const getIntervalDays = (freqString) => {
   const match = freqString.match(/每 (\d+) 天/);
-  if (match) return parseInt(match[1], 10);
-  return 7;
+  return match ? parseInt(match[1], 10) : 7;
 };
 
 // --- 預設資料 ---
 const INITIAL_USERS = [
   { id: 'u1', name: '王小明', balance: -150, avatar: 'bg-blue-400' }, 
   { id: 'u2', name: '李大華', balance: 50, avatar: 'bg-emerald-400' },
-  { id: 'u3', name: '陳小美', balance: 100, avatar: 'bg-rose-400' },
+  { id: 'u3', name: '陳小美', balance: 100, avatar: 'bg-rose-400' }, 
 ];
 
 const INITIAL_TASK_CONFIG = [
@@ -59,22 +73,17 @@ const INITIAL_TASK_CONFIG = [
   { id: 't5', name: '吸地板', price: 50, freq: '每 7 天', icon: '🧹', defaultAssigneeId: 'u2', nextDate: getFutureDate(4) },
 ];
 
+const DEFAULT_DATA = {
+  users: INITIAL_USERS,
+  taskConfigs: INITIAL_TASK_CONFIG,
+  currentCycleTasks: [],
+  logs: []
+};
+
 const AVATAR_COLORS = [
   'bg-blue-400', 'bg-emerald-400', 'bg-rose-400', 'bg-amber-400', 
   'bg-violet-400', 'bg-red-400', 'bg-[#28C8C8]', 'bg-orange-400'
 ];
-
-// Mock LIFF (當真實 LIFF 未啟用時使用)
-const mockLiff = {
-  isInClient: true, 
-  sendMessages: (messages) => {
-    return new Promise((resolve) => {
-      console.log('LIFF 发送消息:', messages);
-      console.log(`[模擬 LINE 通知] ${messages[0].text}`);
-      resolve();
-    });
-  }
-};
 
 // ==========================================
 // 📱 主應用程式 (Main App)
@@ -82,32 +91,27 @@ const mockLiff = {
 
 export default function RoomieTaskApp() {
   // --- Data State ---
-  const [data, setData] = useState({
-    users: INITIAL_USERS,
-    taskConfigs: INITIAL_TASK_CONFIG,
-    currentCycleTasks: [],
-    logs: []
-  }); 
-  const [loading, setLoading] = useState(false); // 預設 false 方便預覽
-  const [roomId, setRoomId] = useState("demo-room-001");
+  const [data, setData] = useState(DEFAULT_DATA); 
+  const [loading, setLoading] = useState(true);
+  const [roomId, setRoomId] = useState("demo-room"); 
+  const [isConnected, setIsConnected] = useState(false);
   
-  // 解構資料
   const { users, taskConfigs, currentCycleTasks, logs } = data;
 
   // --- UI State ---
-  const [currentUser, setCurrentUser] = useState(INITIAL_USERS[0]); 
+  const [currentUserId, setCurrentUserId] = useState(INITIAL_USERS[0].id);
+  const currentUser = users.find(u => u.id === currentUserId) || users[0];
+
   const [view, setView] = useState('roster'); 
   const [rosterViewMode, setRosterViewMode] = useState('list'); 
   const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayString());
   const [calendarMonth, setCalendarMonth] = useState(new Date()); 
   
-  // Lists UI
   const [visibleMyTasksCount, setVisibleMyTasksCount] = useState(3);
   const [visibleAllTasksCount, setVisibleAllTasksCount] = useState(3);
   const [isMyTasksOpen, setIsMyTasksOpen] = useState(true);
   const [isTaskListOpen, setIsTaskListOpen] = useState(true);
 
-  // Forms & Modals
   const [isEditingTask, setIsEditingTask] = useState(null);
   const [editForm, setEditForm] = useState({ name: '', price: '', freq: '每 7 天', icon: '🧹', defaultAssigneeId: '', nextDate: getTodayString() });
   const [customDays, setCustomDays] = useState(7);
@@ -120,41 +124,71 @@ export default function RoomieTaskApp() {
   // ==========================================
 
   useEffect(() => {
-    // 這裡模擬初始化過程
-    // 如果您在本地環境啟用 Firebase/LIFF，請取消註解相關程式碼
     const initApp = async () => {
-      /*
-      if (typeof liff !== 'undefined') {
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) liff.login();
-      }
-      */
-      
-      // 這裡僅作展示：若無任務則產生
-      if (currentCycleTasks.length === 0) {
-        dispatchTasksFromConfig(false); 
+      try {
+        let currentRoomId = "demo-room";
+
+        // 1. 初始化 LIFF
+        if (typeof liff !== 'undefined' && LIFF_ID && LIFF_ID !== "YOUR_LIFF_ID_HERE") {
+          try {
+            await liff.init({ liffId: LIFF_ID });
+            if (!liff.isLoggedIn()) {
+              liff.login();
+              return;
+            }
+            const context = liff.getContext();
+            if (context?.groupId) currentRoomId = context.groupId;
+            else if (context?.utouId) currentRoomId = context.utouId;
+            else if (context?.userId) currentRoomId = context.userId;
+
+            const profile = await liff.getProfile();
+            const foundUser = users.find(u => u.name === profile.displayName);
+            if (foundUser) setCurrentUserId(foundUser.id);
+          } catch (e) { console.error("LIFF Init Error:", e); }
+        }
+        
+        setRoomId(currentRoomId);
+
+        // 2. 連接 Firebase
+        if (ENABLE_FIREBASE && db) {
+           const roomRef = doc(db, "rooms", currentRoomId);
+           const unsubscribe = onSnapshot(roomRef, (docSnap) => {
+             if (docSnap.exists()) {
+               const remoteData = docSnap.data();
+               setData(remoteData);
+               setIsConnected(true);
+             } else {
+               setDoc(roomRef, DEFAULT_DATA)
+                .then(() => setIsConnected(true))
+                .catch(e => alert("無法建立資料庫，請檢查 Firebase 規則：" + e.message));
+             }
+             setLoading(false);
+           }, (error) => {
+             console.error("Firestore Listen Error:", error);
+             setLoading(false);
+             setIsConnected(false);
+           });
+           return () => unsubscribe();
+        } else {
+          setLoading(false);
+        }
+
+      } catch (err) {
+        console.error("App Init Error:", err);
+        setLoading(false);
       }
     };
+
     initApp();
   }, []);
 
-  // 確保 currentUser 有效
-  useEffect(() => {
-    if (users.length > 0 && (!currentUser || !users.find(u => u.id === currentUser.id))) {
-      setCurrentUser(users[0]);
-    }
-  }, [users]);
-
   // ==========================================
-  // 💾 資料庫操作封裝 (DB Actions)
+  // 💾 資料庫操作封裝
   // ==========================================
 
   const updateDB = async (newData) => {
-    // 本地更新
-    setData(newData);
+    setData(newData); // Optimistic Update
 
-    // 雲端更新 (請取消註解)
-    /*
     if (ENABLE_FIREBASE && db && roomId) {
       try {
         const roomRef = doc(db, "rooms", roomId);
@@ -163,7 +197,6 @@ export default function RoomieTaskApp() {
         console.error("Sync Error:", e);
       }
     }
-    */
   };
 
   const addLog = (msg, type = 'info') => {
@@ -178,19 +211,14 @@ export default function RoomieTaskApp() {
     else if (type === 'COMPLETE') text = `✅ 任務完成\n\n${payload.user} 已完成「${payload.task}」`;
     else if (type === 'SETTLE') text = `💸 帳務結清\n\n${payload.from} 已支付 $${payload.amount} 給 ${payload.to}`;
 
-    // LIFF 訊息發送 (請取消註解)
-    /*
     if (typeof liff !== 'undefined' && liff.isInClient() && text) {
-      liff.sendMessages([{ type: 'text', text }]).catch(console.error);
-    } else {
-      console.log('Mock Send:', text);
+      try { await liff.sendMessages([{ type: 'text', text }]); } 
+      catch (err) { console.error('LIFF Send Error:', err); }
     }
-    */
-    console.log('Mock Send:', text);
   };
 
   // ==========================================
-  // 🕹️ 業務邏輯 (Business Logic)
+  // 🕹️ 業務邏輯
   // ==========================================
 
   const dispatchTasksFromConfig = (manualTrigger = false) => {
@@ -203,7 +231,6 @@ export default function RoomieTaskApp() {
     taskConfigs.forEach((config) => {
       const interval = getIntervalDays(config.freq);
       let currentDate = new Date(config.nextDate || getTodayString()); 
-      
       let assigneeIndex = users.findIndex(u => u.id === config.defaultAssigneeId);
       if (assigneeIndex === -1) assigneeIndex = 0;
 
@@ -238,30 +265,21 @@ export default function RoomieTaskApp() {
       });
       setView('roster');
     } else if (currentCycleTasks.length === 0) {
-      // Init only
       updateDB({ ...data, currentCycleTasks: generatedTasks });
     }
   };
 
-  // --- Logic: Settlement ---
   const calculateSettlements = () => {
-    // 複製並排序，避免修改到原始 state
     let debtors = users.filter(u => u.balance < 0).map(u => ({...u})).sort((a, b) => a.balance - b.balance);
     let creditors = users.filter(u => u.balance > 0).map(u => ({...u})).sort((a, b) => b.balance - a.balance);
     const settlements = [];
     let i = 0, j = 0;
-    
     while (i < debtors.length && j < creditors.length) {
       let debtor = debtors[i];
       let creditor = creditors[j];
       let amount = Math.min(Math.abs(debtor.balance), creditor.balance);
-      
       if (amount > 0) {
-        settlements.push({
-          fromId: debtor.id, fromName: debtor.name,
-          toId: creditor.id, toName: creditor.name,
-          amount: amount
-        });
+        settlements.push({ fromId: debtor.id, fromName: debtor.name, toId: creditor.id, toName: creditor.name, amount: amount });
       }
       debtor.balance += amount;
       creditor.balance -= amount;
@@ -271,11 +289,10 @@ export default function RoomieTaskApp() {
     return settlements;
   };
 
-  // --- UI Helpers ---
+  // --- Modals & Helpers ---
   const showConfirm = (title, message, onConfirm) => setConfirmModal({ isOpen: true, title, message, type: 'confirm', onConfirm });
   const showAlert = (title, message) => setConfirmModal({ isOpen: true, title, message, type: 'alert', onConfirm: () => {} });
   const closeConfirmModal = () => setConfirmModal(prev => ({ ...prev, isOpen: false }));
-  
   const getUserName = (id) => users.find(u => u.id === id)?.name || '未知';
   const getUserAvatar = (id) => users.find(u => u.id === id)?.avatar || 'bg-gray-300';
 
@@ -285,7 +302,7 @@ export default function RoomieTaskApp() {
     const price = Number(editForm.price);
     const finalFreq = `每 ${customDays} 天`;
     const newConfig = { ...editForm, price, freq: finalFreq };
-
+    
     let newTaskConfigs;
     if (isEditingTask) {
       newTaskConfigs = taskConfigs.map(t => t.id === isEditingTask ? { ...t, ...newConfig } : t);
@@ -308,11 +325,7 @@ export default function RoomieTaskApp() {
   const saveUser = () => {
     if (!userForm.name.trim()) return;
     const newUser = { id: `u${Date.now()}`, name: userForm.name, avatar: userForm.avatar, balance: 0 };
-    updateDB({ 
-      ...data, 
-      users: [...users, newUser],
-      logs: addLog(`👋 歡迎新室友 ${newUser.name} 加入！`, 'success')
-    });
+    updateDB({ ...data, users: [...users, newUser], logs: addLog(`👋 歡迎新室友 ${newUser.name} 加入！`, 'success') });
     setIsAddingUser(false);
     setUserForm({ name: '', avatar: 'bg-blue-400' });
   };
@@ -327,6 +340,7 @@ export default function RoomieTaskApp() {
     showConfirm('刪除室友', `確定要刪除 ${userToDelete.name} 嗎？`, () => {
       const newUsers = users.filter(u => u.id !== userId);
       const newCycleTasks = currentCycleTasks.map(t => t.currentHolderId === userId ? { ...t, status: 'open', currentHolderId: null } : t);
+      if (currentUserId === userId && newUsers.length > 0) setCurrentUserId(newUsers[0].id);
       updateDB({ ...data, users: newUsers, currentCycleTasks: newCycleTasks });
       closeConfirmModal();
     });
@@ -352,6 +366,11 @@ export default function RoomieTaskApp() {
   };
 
   // --- Task Actions ---
+  const updateBalance = (userId, amount) => {
+    if (!userId) return;
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: u.balance + amount } : u));
+  };
+
   const completeTask = (taskId) => {
     const task = currentCycleTasks.find(t => t.id === taskId);
     const newCycleTasks = currentCycleTasks.map(t => t.id === taskId ? { ...t, status: 'done' } : t);
@@ -430,7 +449,7 @@ export default function RoomieTaskApp() {
     </div>
   );
 
-  if (loading) return <div className="fixed inset-0 flex items-center justify-center bg-gray-50"><Loader2 className="w-10 h-10 text-[#28C8C8] animate-spin" /></div>;
+  if (loading) return <div className="fixed inset-0 flex items-center justify-center bg-gray-50"><Loader2 className="w-10 h-10 text-[#28C8C8] animate-spin mb-4" /></div>;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-50 font-sans max-w-md mx-auto border-x border-gray-200 shadow-2xl overflow-hidden h-[100dvh]">
@@ -458,30 +477,32 @@ export default function RoomieTaskApp() {
       {/* Header */}
       <header className="flex-none bg-white px-4 py-4 border-b flex justify-between items-center z-10">
         <div className="flex items-center gap-2">
-          <div className="bg-[#28C8C8] p-2 rounded-lg text-white"><ClipboardList size={18} /></div>
+          {/* Status Indicator */}
+          {isConnected ? (
+             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="已連線"></div>
+          ) : (
+             <div className="w-2 h-2 rounded-full bg-red-500" title="未連線"></div>
+          )}
           <div><h1 className="font-bold text-gray-800 text-lg leading-tight">家事值日生</h1></div>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 bg-gray-100 rounded-full px-2 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
           <span className="text-xs text-gray-500 font-medium">我是</span>
-          <div className="flex items-center gap-2 bg-gray-100 rounded-full pl-2 pr-3 py-1.5 cursor-pointer hover:bg-gray-200 border border-gray-200 relative transition-colors">
-            {currentUser && (
-              <>
-                <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border border-gray-200`}></div>
-                <div className="relative">
-                  <select 
-                    className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-4 cursor-pointer z-10 relative"
-                    value={currentUser.id}
-                    onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
-                    style={{ textAlignLast: 'center' }} 
-                  >
-                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400"><ChevronDown size={12} /></div>
-                </div>
-              </>
-            )}
-          </div>
+          {currentUser && (
+            <>
+              <div className={`w-6 h-6 rounded-full ${currentUser.avatar} flex-shrink-0 border border-gray-200`}></div>
+              <div className="relative">
+                <select 
+                  className="bg-transparent text-sm font-bold outline-none text-gray-700 appearance-none pr-1 cursor-pointer"
+                  value={currentUser.id}
+                  onChange={(e) => setCurrentUser(users.find(u => u.id === e.target.value))}
+                  style={{ textAlignLast: 'center' }} 
+                >
+                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
@@ -491,6 +512,7 @@ export default function RoomieTaskApp() {
         {/* VIEW: ROSTER */}
         {view === 'roster' && (
           <div className="space-y-4">
+            
             <div className="flex bg-gray-100 p-1 rounded-xl">
               <button onClick={() => setRosterViewMode('list')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${rosterViewMode === 'list' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><List size={16} /> 清單模式</button>
               <button onClick={() => setRosterViewMode('calendar')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all ${rosterViewMode === 'calendar' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><CalendarDays size={16} /> 日曆模式</button>
@@ -506,7 +528,7 @@ export default function RoomieTaskApp() {
                 {isMyTasksOpen && (
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in mb-6">
                     {(() => {
-                      const myTasks = currentCycleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
+                      const myTasks = currentCycleTasks.filter(t => t.currentHolderId === currentUserId && t.status === 'pending');
                       if (myTasks.length === 0) return <div className="p-6 text-center text-gray-400 text-sm">目前沒有待辦事項 🎉</div>;
                       const displayedTasks = myTasks.slice(0, visibleMyTasksCount);
                       return (
@@ -557,10 +579,11 @@ export default function RoomieTaskApp() {
                         <>
                           <div className="divide-y divide-gray-50">
                             {displayedAllTasks.map(task => {
-                              const isMine = task.currentHolderId === currentUser?.id;
+                              const isMine = task.currentHolderId === currentUserId;
                               const isOpen = task.status === 'open';
                               const isDone = task.status === 'done';
                               const isTaskFuture = isFutureDate(task.date);
+                              
                               return (
                                 <div key={task.id} className={`p-4 flex items-center justify-between transition-colors ${isOpen ? 'bg-red-50/50' : 'hover:bg-gray-50'}`}>
                                   <div className="flex items-center gap-4">
@@ -630,7 +653,7 @@ export default function RoomieTaskApp() {
                   <div className="space-y-3">
                     {currentCycleTasks.filter(t => t.date === calendarSelectedDate).length === 0 ? <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-400 text-sm border border-dashed border-gray-200">這一天沒有安排任何任務 😴</div> : 
                       currentCycleTasks.filter(t => t.date === calendarSelectedDate).map(task => {
-                        const isMine = task.currentHolderId === currentUser?.id;
+                        const isMine = task.currentHolderId === currentUserId;
                         const isOpen = task.status === 'open';
                         const isDone = task.status === 'done';
                         const isTaskFuture = isFutureDate(task.date);
@@ -767,6 +790,7 @@ export default function RoomieTaskApp() {
               <h2 className="font-bold text-xl text-gray-800">{isEditingTask ? '編輯規則' : '新增規則'}</h2>
               <button onClick={closeEditor} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"><X size={20} /></button>
             </div>
+            
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">名稱與圖示</label>
@@ -775,11 +799,13 @@ export default function RoomieTaskApp() {
                   <input type="text" placeholder="例如：倒垃圾" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="flex-1 px-4 border border-gray-300 rounded-lg outline-none focus:border-[#28C8C8]" />
                 </div>
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2"><Calendar size={16} /> 下次執行日</label>
                 <input type="date" value={editForm.nextDate} onChange={e => setEditForm({...editForm, nextDate: e.target.value})} className="w-full px-4 py-3 border border-gray-300 rounded-lg outline-none focus:border-[#28C8C8] bg-white" />
                 <p className="text-xs text-gray-400 mt-1">請指定這個任務「下一次」應該在哪一天執行。</p>
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2"><User size={16} /> 誰先開始</label>
                 <div className="relative">
@@ -790,6 +816,7 @@ export default function RoomieTaskApp() {
                 </div>
                 <p className="text-xs text-gray-400 mt-1">選定後，系統排班將從這位室友開始輪替。</p>
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">代班價格 (NT$)</label>
                 <div className="relative">
@@ -797,6 +824,7 @@ export default function RoomieTaskApp() {
                   <div className="absolute right-4 top-3.5 text-gray-400 text-sm pointer-events-none">元</div>
                 </div>
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">重複頻率</label>
                 <div className="flex items-center gap-3 p-2">
@@ -806,6 +834,7 @@ export default function RoomieTaskApp() {
                 </div>
               </div>
             </div>
+
             <div className="p-6 border-t border-gray-100 bg-white">
                <button onClick={saveTaskConfig} disabled={!isFormValid} className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${isFormValid ? 'bg-[#28C8C8] text-white shadow-[#28C8C8]/40 hover:bg-[#20a0a0] active:scale-[0.98]' : 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none'}`}><Save size={20} /> 儲存設定</button>
             </div>
