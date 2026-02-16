@@ -168,7 +168,6 @@ export default function RoomieTaskApp() {
          const newGroups = saved.filter(g => g.id !== gId);
          localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
          setMyGroups(newGroups);
-         
          setLoading(false);
          setGroupId(null);
          alert("此空間已不存在");
@@ -194,13 +193,9 @@ export default function RoomieTaskApp() {
         const safeUsers = data.users ? Object.values(data.users).filter(u => u) : [];
         setUsers(safeUsers);
         
-        // 🔥 修復邀請連結無法進入：
-        // 如果我不在成員名單中，代表我是新來的 -> 執行加入 (Register)
-        // 舊邏輯會把我踢回家，現在改為自動加入
+        // 自動加入邏輯 (修復邀請連結)
         if (user && user.id && (!data.users || !data.users[user.id])) {
-             console.log("新成員加入中...");
              registerMember(gId, user);
-             // 不 return，繼續渲染畫面，等待下一次 onValue 更新
         }
 
         const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs).filter(c => c) : [];
@@ -214,13 +209,10 @@ export default function RoomieTaskApp() {
         
         setGroupName(data.metadata?.name || '我的空間');
         
-        // 🔥 修復退出後鬼影殘留：
-        // 只有當我「確定在名單內」且「沒有正在退出」時，才更新 LocalStorage
         if (user && user.id && data.users && data.users[user.id] && !isQuittingRef.current) {
             const saved = getSavedGroups();
             const currentName = data.metadata?.name || '新空間';
             const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
-            
             if (!saved.find(g => g.id === gId) || isNameDiff) {
               const otherGroups = saved.filter(g => g.id !== gId);
               const updated = [{ id: gId, name: currentName }, ...otherGroups].slice(0, 10);
@@ -541,6 +533,13 @@ export default function RoomieTaskApp() {
     await update(ref(db), updates);
     setAlertMsg("結帳成功！");
   };
+
+  // 🔥 關鍵變數宣告：移至 render 之前，防止 myTasks is not defined 錯誤
+  const limitDate = addDays(getTodayString(), 45);
+  const validConfigIds = taskConfigs.map(c => c.id);
+  const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' || t.date >= getTodayString()));
+  const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
+  const allTasks = visibleTasks;
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#28C8C8]"/></div>;
 
