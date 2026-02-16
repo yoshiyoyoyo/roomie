@@ -164,10 +164,12 @@ export default function RoomieTaskApp() {
     try {
       const snapshot = await get(ref(db, `groups/${gId}`));
       if (!snapshot.exists()) {
+         // DB 無此群組 -> 移除本地紀錄 -> 回首頁
          const saved = getSavedGroups();
          const newGroups = saved.filter(g => g.id !== gId);
          localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
          setMyGroups(newGroups);
+         
          setLoading(false);
          setGroupId(null);
          alert("此空間已不存在");
@@ -190,14 +192,33 @@ export default function RoomieTaskApp() {
 
       const data = snap.val();
       if (data) {
+        // 🔥 關鍵邏輯：判斷是「新加入」還是「被踢出」
+        const isMember = user && user.id && data.users && data.users[user.id];
+        
+        if (!isMember) {
+            const saved = getSavedGroups();
+            const isLocalKnown = saved.find(g => g.id === gId);
+
+            if (isLocalKnown) {
+                // 情境 A: 本地有紀錄，但 DB 沒人 -> 代表被踢出
+                console.log("您已被移除");
+                const newGroups = saved.filter(g => g.id !== gId);
+                localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
+                setMyGroups(newGroups);
+                setViewState('landing');
+                setLoading(false);
+                return;
+            } else {
+                // 情境 B: 本地沒紀錄，DB 沒人 -> 代表是新點擊邀請連結 -> 執行加入
+                console.log("新成員，執行加入...");
+                registerMember(gId, user);
+                // 這裡不 return，繼續跑下面的渲染，等待下一次 onValue 更新 users
+            }
+        }
+
         const safeUsers = data.users ? Object.values(data.users).filter(u => u) : [];
         setUsers(safeUsers);
         
-        // 自動加入邏輯 (修復邀請連結)
-        if (user && user.id && (!data.users || !data.users[user.id])) {
-             registerMember(gId, user);
-        }
-
         const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs).filter(c => c) : [];
         setTaskConfigs(safeConfigs);
         
@@ -209,10 +230,12 @@ export default function RoomieTaskApp() {
         
         setGroupName(data.metadata?.name || '我的空間');
         
-        if (user && user.id && data.users && data.users[user.id] && !isQuittingRef.current) {
+        // 只有確定是成員時，才同步本地列表
+        if (isMember && !isQuittingRef.current) {
             const saved = getSavedGroups();
             const currentName = data.metadata?.name || '新空間';
             const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
+            
             if (!saved.find(g => g.id === gId) || isNameDiff) {
               const otherGroups = saved.filter(g => g.id !== gId);
               const updated = [{ id: gId, name: currentName }, ...otherGroups].slice(0, 10);
@@ -311,19 +334,29 @@ export default function RoomieTaskApp() {
     } catch (e) { alert("重置失敗"); }
   };
 
+  // 🔥 關鍵修復：退出時直接操作 LocalStorage，不依賴可能過時的 State
   const handleQuitGroupConfirm = async () => {
     isQuittingRef.current = true; 
     if (dbRef.current) off(dbRef.current);
+
     try {
       const logId = Date.now();
       await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 離開了空間`, type: 'warning', time: new Date().toLocaleTimeString() });
       await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
-      const newGroups = myGroups.filter(g => g.id !== groupId);
+      
+      // 直接讀取最新 LS -> 過濾 -> 寫回
+      const currentSaved = getSavedGroups();
+      const newGroups = currentSaved.filter(g => g.id !== groupId);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
       setMyGroups(newGroups);
+      
       setShowQuitModal(false);
       handleGoHome();
-    } catch (e) { alert("退出失敗，請重試"); isQuittingRef.current = false; }
+
+    } catch (e) {
+      alert("退出失敗，請重試");
+      isQuittingRef.current = false;
+    }
   };
 
   const handleCreateGroupConfirm = async () => {
@@ -534,7 +567,6 @@ export default function RoomieTaskApp() {
     setAlertMsg("結帳成功！");
   };
 
-  // 🔥 關鍵變數宣告：移至 render 之前，防止 myTasks is not defined 錯誤
   const limitDate = addDays(getTodayString(), 45);
   const validConfigIds = taskConfigs.map(c => c.id);
   const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' || t.date >= getTodayString()));
