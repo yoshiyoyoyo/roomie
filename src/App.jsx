@@ -29,7 +29,7 @@ const db = getDatabase(app);
 const getTodayString = () => new Date().toISOString().split('T')[0];
 const addDays = (dateStr, days) => {
   const result = new Date(dateStr);
-  result.setDate(result.getDate() + parseInt(days));
+  result.setDate(result.getDate() + days);
   return result.toISOString().split('T')[0];
 };
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -37,7 +37,7 @@ const getSavedGroups = () => {
   try { return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); } catch (e) { return []; }
 };
 
-// Emoji 列表
+// 擴充 Emoji 列表
 const EMOJI_LIST = [
   "🧹", "🗑️", "🍽️", "🧺", "🚽", "🍳", "🛒", "📦", "✨", "🐶", 
   "🐱", "🪴", "🚿", "🧽", "🧼", "🪣", "🪟", "🔧", "💡", "🛋️",
@@ -61,14 +61,9 @@ export default function RoomieTaskApp() {
 
   // UI Views
   const [view, setView] = useState('roster');
+  const [rosterTab, setRosterTab] = useState('mine'); // 'mine' | 'all' (取代原本的捲動設計)
   const mainScrollRef = useRef(null);
   
-  // 列表控制
-  const [myTasksLimit, setMyTasksLimit] = useState(5);
-  const [allTasksLimit, setAllTasksLimit] = useState(5);
-  const [isMyTasksCollapsed, setIsMyTasksCollapsed] = useState(false);
-  const [isTaskListCollapsed, setIsTaskListCollapsed] = useState(false);
-
   // Modals
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -116,6 +111,7 @@ export default function RoomieTaskApp() {
     setLoading(true);
     setGroupId(gId);
     
+    // 初次進入檢查排班
     const snapshot = await get(ref(db, `groups/${gId}`));
     if (snapshot.exists()) {
        await checkAndGenerateTasks(gId, snapshot.val()); 
@@ -132,13 +128,10 @@ export default function RoomieTaskApp() {
         setGroupName(data.metadata?.name || '我的空間');
         
         const saved = getSavedGroups();
-        // 確保本地名稱與線上同步
-        const currentName = data.metadata?.name || '新空間';
-        const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
-        
-        if (!saved.find(g => g.id === gId) || isNameDiff) {
+        if (!saved.find(g => g.id === gId) || saved.find(g => g.id === gId).name !== data.metadata?.name) {
+          const newEntry = { id: gId, name: data.metadata?.name || '新空間' };
           const otherGroups = saved.filter(g => g.id !== gId);
-          const updated = [{ id: gId, name: currentName }, ...otherGroups].slice(0, 10);
+          const updated = [newEntry, ...otherGroups].slice(0, 10);
           localStorage.setItem('roomie_groups', JSON.stringify(updated));
           setMyGroups(updated);
         }
@@ -150,7 +143,7 @@ export default function RoomieTaskApp() {
     });
   };
 
-  // 🔥 自動補班邏輯
+  // 🔥 核心：自動補班
   const checkAndGenerateTasks = async (gId, data) => {
     if (!data.taskConfigs || !data.users) return;
     const updates = {};
@@ -162,6 +155,7 @@ export default function RoomieTaskApp() {
     configs.forEach(cfg => {
       let nextDate = cfg.nextDate || getTodayString();
       let order = (cfg.assigneeOrder && cfg.assigneeOrder.length > 0) ? cfg.assigneeOrder : allUserIds;
+      // Filter out invalid users
       order = order.filter(uid => allUserIds.includes(uid));
       if (order.length === 0) order = allUserIds;
 
@@ -169,22 +163,22 @@ export default function RoomieTaskApp() {
       if (!runningAssigneeId || !order.includes(runningAssigneeId)) runningAssigneeId = order[0];
 
       let loopCount = 0;
-      // ⚠️ 防死結機制：最多產生 100 筆，避免當機
-      while (nextDate <= limitDate && loopCount < 100) {
+      while (nextDate <= limitDate && loopCount < 50) {
         loopCount++;
-        const tid = `task-${generateId()}-${Date.now()}`;
-        const freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq;
-
-        updates[`groups/${gId}/tasks/${tid}`] = {
-          id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
-          date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
-        };
+        const tid = `task-${cfg.id}-${nextDate.replace(/-/g, '')}`;
+        
+        if (!data.tasks || !data.tasks[tid]) {
+            updates[`groups/${gId}/tasks/${tid}`] = {
+              id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
+              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+            };
+        }
 
         const currIdx = order.indexOf(runningAssigneeId);
         const nextIdx = (currIdx + 1) % order.length;
         runningAssigneeId = order[nextIdx];
 
-        nextDate = addDays(nextDate, freqNum);
+        nextDate = addDays(nextDate, typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq);
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
         hasUpdates = true;
@@ -194,32 +188,20 @@ export default function RoomieTaskApp() {
     if (hasUpdates) await update(ref(db), updates);
   };
 
-  const clearFutureTasks = async (configId) => {
-    const tasksToRemove = currentCycleTasks.filter(t => t.configId === configId && t.status !== 'done');
-    const updates = {};
-    tasksToRemove.forEach(t => {
-      updates[`groups/${groupId}/tasks/${t.id}`] = null;
-    });
-    if (Object.keys(updates).length > 0) {
-      await update(ref(db), updates);
-    }
-  };
-
   const registerMember = (gId, user) => {
     update(ref(db, `groups/${gId}/users/${user.id}`), { ...user, balance: 0, joinedAt: serverTimestamp() });
-    const logId = Date.now();
-    set(ref(db, `groups/${gId}/logs/${logId}`), { id: logId, msg: `${user.name} 加入了空間`, type: 'success', time: new Date().toLocaleTimeString() });
+    // Join log removed or kept simple? Keeping simple log
+    // const logId = Date.now();
+    // set(ref(db, `groups/${gId}/logs/${logId}`), { id: logId, msg: `${user.name} 加入了空間`, type: 'success', time: new Date().toLocaleTimeString() });
   };
 
   // --- Header Operations ---
   const handleRenameGroup = async () => {
     if (newNameInput.trim()) {
       await update(ref(db, `groups/${groupId}/metadata`), { name: newNameInput });
-      // 強制更新本地，確保跳回首頁時即時生效
       const newGroups = myGroups.map(g => g.id === groupId ? { ...g, name: newNameInput } : g);
       setMyGroups(newGroups);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
-      
       setShowRenameModal(false);
     }
   };
@@ -228,7 +210,7 @@ export default function RoomieTaskApp() {
     const updates = {};
     updates[`groups/${groupId}/tasks`] = null;
     updates[`groups/${groupId}/logs`] = null;
-    updates[`groups/${groupId}/taskConfigs`] = null;
+    updates[`groups/${groupId}/taskConfigs`] = null; 
     users.forEach(u => updates[`groups/${groupId}/users/${u.id}/balance`] = 0);
     
     await update(ref(db), updates);
@@ -236,32 +218,32 @@ export default function RoomieTaskApp() {
     setAlertMsg("群組已完全重置");
   };
 
-  // ✅ 修復問題1: 退出群組功能
   const handleQuitGroupConfirm = async () => {
     try {
       const logId = Date.now();
+      // 先寫 log
       await set(ref(db, `groups/${groupId}/logs/${logId}`), { 
         id: logId, 
         msg: `${currentUser.name} 離開了空間`, 
         type: 'warning', 
         time: new Date().toLocaleTimeString() 
       });
+      
+      // 再刪除成員
       await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
       
+      // 最後清除本地並跳轉
       const newGroups = myGroups.filter(g => g.id !== groupId);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
       setMyGroups(newGroups);
       
       setShowQuitModal(false);
-      setIsUserMenuOpen(false);
-      
-      // 清除 URL 參數並回到首頁
-      window.history.pushState({}, '', window.location.pathname);
       setGroupId(null);
+      setIsUserMenuOpen(false);
       setViewState('landing');
-    } catch (error) {
-      console.error('退出群組失敗:', error);
-      setAlertMsg('退出失敗，請稍後再試');
+      window.location.reload();
+    } catch (e) {
+      alert("退出失敗，請檢查網路");
     }
   };
 
@@ -291,17 +273,24 @@ export default function RoomieTaskApp() {
     if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
         const originalUser = users.find(u => u.id === task.originalHolderId);
         const myUser = users.find(u => u.id === currentUser.id);
+        
         if (originalUser && myUser) {
             updates[`groups/${groupId}/users/${task.originalHolderId}/balance`] = originalUser.balance - (task.price || 0);
             updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myUser.balance + (task.price || 0);
+            
             const logId = Date.now();
             updates[`groups/${groupId}/logs/${logId}`] = { 
-                id: logId, msg: `${currentUser.name} 完成了 ${task.name} (由 ${originalUser.name} 支付)`, type: 'success', time: new Date().toLocaleTimeString() 
+                id: logId, 
+                msg: `${currentUser.name} 完成了 ${task.name} (由 ${originalUser.name} 支付)`, 
+                type: 'success', 
+                time: new Date().toLocaleTimeString() 
             };
         }
     } else {
         const logId = Date.now();
-        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
+        updates[`groups/${groupId}/logs/${logId}`] = { 
+            id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() 
+        };
     }
     await update(ref(db), updates);
   };
@@ -330,81 +319,71 @@ export default function RoomieTaskApp() {
     }
   };
 
-  // 📝 開啟新增視窗時，預設全選
   const handleOpenAddConfig = () => {
     setEditingConfigId(null);
     setConfigForm({ 
       name: '', price: 30, freq: 7, icon: '🧹', 
-      assigneeOrder: users.map(u => u.id), // Default Select All
+      assigneeOrder: users.map(u => u.id), // 🔥 預設全選
       nextDate: getTodayString() 
     });
     setIsEditingConfig(true);
   };
 
-  // ✅ 修復問題3和4: 編輯家事同步與儲存錯誤
+  // 🔥 核心：Atomic Save & Reschedule (修復：確保清空舊任務)
   const saveConfig = async () => {
     try {
-      if (!configForm.name.trim()) { 
-        setFormError("請輸入家事名稱！"); 
-        return; 
-      }
-      if (configForm.price <= 0 || configForm.freq <= 0) { 
-        setFormError("金額與頻率必須大於 0！"); 
-        return; 
-      }
+      if (!configForm.name.trim()) { alert("請輸入家事名稱！"); return; }
+      if (configForm.price <= 0 || configForm.freq <= 0) { alert("金額與頻率必須大於 0！"); return; }
       
       let assigneeOrder = configForm.assigneeOrder;
+      // 🔥 防呆：若使用者沒選，預設全選
       if (!assigneeOrder || assigneeOrder.length === 0) {
-        setFormError("請至少選擇一位排班人員！");
-        return;
+        assigneeOrder = users.map(u => u.id);
       }
-
-      setFormError('');
 
       const id = editingConfigId || `cfg-${generateId()}`;
+      const freqStr = typeof configForm.freq === 'string' ? configForm.freq : `每 ${configForm.freq} 天`;
       const freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '7');
 
-      // 1. 清除舊任務 (若為編輯)
-      if (editingConfigId) {
-        await clearFutureTasks(id);
+      const updates = {};
+
+      // 1. 為了確保資料同步，先 GET 資料庫目前的任務狀態
+      // 這是解決「編輯後舊任務還在」的關鍵
+      const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
+      if (tasksSnap.exists()) {
+          const allTasks = tasksSnap.val();
+          Object.values(allTasks).forEach(t => {
+              // 刪除所有屬於此 Config 且未完成的任務
+              if (t.configId === id && t.status !== 'done') {
+                  updates[`groups/${groupId}/tasks/${t.id}`] = null;
+              }
+          });
       }
 
-      // 2. 準備新資料
-      const updates = {};
-      const freqStr = `每 ${freqNum} 天`;
-      
+      // 2. 寫入新 Config (強制重置 nextDate)
       const configData = { 
-        id,
-        name: configForm.name,
-        price: configForm.price,
-        icon: configForm.icon,
-        freq: freqStr,
+        ...configForm, 
+        id, 
+        freq: freqStr, 
         assigneeOrder, 
-        nextAssigneeId: assigneeOrder[0], 
-        nextDate: configForm.nextDate 
+        nextAssigneeId: assigneeOrder[0],
+        nextDate: configForm.nextDate // 重置日期
       };
       updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
 
-      // 3. 立即計算未來任務 (In-Memory Calculation for Atomic Write)
+      // 3. 重新計算未來任務
       let nextDate = configData.nextDate;
       const limitDate = addDays(getTodayString(), 45);
       let runningAssigneeId = configData.nextAssigneeId;
       let loopCount = 0;
 
-      // ⚠️ 防死結: 強制最多產生 50 筆
       while (nextDate <= limitDate && loopCount < 50) {
           loopCount++;
-          const tid = `task-${id}-${nextDate.replace(/-/g, '')}-${loopCount}`;
+          const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
           
           updates[`groups/${groupId}/tasks/${tid}`] = {
-              id: tid, 
-              configId: id, 
-              name: configData.name, 
-              price: configData.price, 
-              icon: configData.icon,
-              date: nextDate, 
-              status: 'pending', 
-              currentHolderId: runningAssigneeId
+              id: tid, configId: id, name: configData.name, price: configData.price, icon: configData.icon,
+              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
           };
 
           const currIdx = assigneeOrder.indexOf(runningAssigneeId);
@@ -425,15 +404,27 @@ export default function RoomieTaskApp() {
       setAlertMsg("排班已更新！");
 
     } catch (error) {
-      console.error('儲存失敗:', error);
-      setFormError("儲存失敗，請檢查網路連線");
+      console.error(error);
+      alert("儲存失敗，請檢查網路連線");
     }
   };
 
   const deleteConfigConfirm = async () => {
     if (deleteTarget && deleteTarget.type === 'config') {
-       await clearFutureTasks(deleteTarget.id);
-       await remove(ref(db, `groups/${groupId}/taskConfigs/${deleteTarget.id}`));
+       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
+       const updates = {};
+       
+       if (tasksSnap.exists()) {
+           const allTasks = tasksSnap.val();
+           Object.values(allTasks).forEach(t => {
+               if (t.configId === deleteTarget.id) {
+                   updates[`groups/${groupId}/tasks/${t.id}`] = null;
+               }
+           });
+       }
+       updates[`groups/${groupId}/taskConfigs/${deleteTarget.id}`] = null;
+       
+       await update(ref(db), updates);
        setDeleteTarget(null);
     }
   };
@@ -518,7 +509,7 @@ export default function RoomieTaskApp() {
 
   return (
     <div className="fixed inset-0 bg-gray-50 max-w-md mx-auto flex flex-col h-[100dvh]">
-      <header className="flex-none bg-white p-4 border-b flex justify-between items-center z-50 shadow-sm relative">
+      <header className="flex-none bg-white p-4 border-b flex justify-between items-center z-30 shadow-sm relative">
         <div className="flex items-center gap-2">
           <h1 className="font-bold text-lg text-gray-800 truncate max-w-[150px]">{groupName}</h1>
           <Edit2 size={16} className="text-gray-400 cursor-pointer hover:text-[#28C8C8]" onClick={() => { setNewNameInput(groupName); setShowRenameModal(true); }}/>
@@ -533,7 +524,7 @@ export default function RoomieTaskApp() {
               <div className="fixed inset-0 z-40" onClick={() => setIsUserMenuOpen(false)}></div>
               <div className="absolute right-0 top-12 w-48 bg-white border rounded-xl shadow-xl z-50 overflow-hidden">
                  <button onClick={() => { setViewState('landing'); setGroupId(null); setIsUserMenuOpen(false); window.history.pushState({}, '', window.location.pathname); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><Home size={18}/> 我的空間</button>
-                 <button onClick={() => { setIsUserMenuOpen(false); setShowResetModal(true); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><RotateCcw size={18}/> 重置群組</button>
+                 <button onClick={() => { setIsUserMenuOpen(false); setShowResetModal(true); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-700"><RotateCcw size={18}/> 重置群組</button>
                  <button onClick={() => { setIsUserMenuOpen(false); setShowQuitModal(true); }} className="w-full text-left p-4 text-base text-red-500 flex items-center gap-3 hover:bg-gray-50 font-bold"><LogOut size={18}/> 退出群組</button>
               </div>
             </>
@@ -541,72 +532,61 @@ export default function RoomieTaskApp() {
         </div>
       </header>
 
-      {/* ✅ 修復問題2: 調整 sticky 定位，避免內容露出 */}
       <main className="flex-1 overflow-y-auto p-4 pb-24 overscroll-contain" ref={mainScrollRef}>
         {view === 'roster' && (
           <div className="space-y-6">
-            <section>
-              <div className="sticky top-[-16px] bg-gray-50 z-20 py-3 flex justify-between items-center mb-2 cursor-pointer" onClick={() => setIsMyTasksCollapsed(!isMyTasksCollapsed)}>
-                <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><CheckCircle2 size={20} className="text-[#28C8C8]"/> 近期待辦</h3>
-                {isMyTasksCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
-              </div>
-              {!isMyTasksCollapsed && (
-                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                  {myTasks.length === 0 ? 
-                    <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
-                    myTasks.slice(0, myTasksLimit).map(task => (
-                      <div key={task.id} className="p-4 flex items-center justify-between border-b last:border-0">
-                        <div className="flex items-center gap-3">
-                          <span className="text-3xl">{task.icon}</span>
-                          <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-gray-400 font-bold">{task.date}</div></div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-bold">沒空</button>
-                          <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-lg text-sm font-bold ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#28C8C8]'}`}>完成</button>
-                        </div>
+            {/* New Tabs Design */}
+            <div className="flex bg-gray-100 p-1 rounded-2xl mb-4">
+              <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-400'}`}>近期待辦</button>
+              <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-400'}`}>任務列表</button>
+            </div>
+
+            {rosterTab === 'mine' && (
+              <div className="space-y-3">
+                {myTasks.length === 0 ? 
+                  <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed">目前沒有任務 🎉</div> :
+                  myTasks.slice(0, myTasksLimit).map(task => (
+                    <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <span className="text-3xl">{task.icon}</span>
+                        <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-gray-400 font-bold">{task.date}</div></div>
                       </div>
-                    ))
-                  }
-                  {myTasks.length > myTasksLimit && (
-                    <button onClick={() => setMyTasksLimit(l => l + 5)} className="w-full p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 hover:bg-gray-100 transition-colors">查看更多</button>
-                  )}
-                </div>
-              )}
-            </section>
-            
-            <section>
-              <div className="sticky top-[-16px] bg-gray-50 z-20 py-3 flex justify-between items-center mb-2 cursor-pointer" onClick={() => setIsTaskListCollapsed(!isTaskListCollapsed)}>
-                <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Users size={20}/> 任務列表</h3>
-                {isTaskListCollapsed ? <ChevronDown size={20} className="text-gray-400"/> : <ChevronUp size={20} className="text-gray-400"/>}
+                      <div className="flex gap-2">
+                        <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-xl text-sm font-bold">沒空</button>
+                        <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-xl text-sm font-bold ${task.date > getTodayString() ? 'bg-gray-300' : 'bg-[#28C8C8]'}`}>完成</button>
+                      </div>
+                    </div>
+                  ))
+                }
+                {myTasks.length > myTasksLimit && <button onClick={() => setMyTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 rounded-xl">查看更多</button>}
               </div>
-              {!isTaskListCollapsed && (
-                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                  {allTasks.length === 0 ? <div className="p-8 text-center text-gray-400 text-base">目前沒有任務 🎉</div> :
-                    allTasks.slice(0, allTasksLimit).map(task => {
-                      const isOpen = task.status === 'open';
-                      const isDone = task.status === 'done';
-                      const holder = users.find(u => u.id === task.currentHolderId);
-                      return (
-                        <div key={task.id} className={`p-4 flex items-center justify-between border-b last:border-0 ${isOpen ? 'bg-red-50' : ''}`}>
-                          <div className="flex items-center gap-3">
-                            <span className={`text-3xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
-                            <div>
-                              <div className="font-bold text-base text-gray-800">{task.name}</div>
-                              <div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div>
-                            </div>
+            )}
+
+            {rosterTab === 'all' && (
+              <div className="space-y-3">
+                {allTasks.length === 0 ? <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed">目前沒有任務 🎉</div> :
+                  allTasks.slice(0, allTasksLimit).map(task => {
+                    const isOpen = task.status === 'open';
+                    const isDone = task.status === 'done';
+                    const holder = users.find(u => u.id === task.currentHolderId);
+                    return (
+                      <div key={task.id} className={`p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between ${isOpen ? 'bg-red-50' : 'bg-white'}`}>
+                        <div className="flex items-center gap-4">
+                          <span className={`text-3xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
+                          <div>
+                            <div className="font-bold text-base text-gray-800">{task.name}</div>
+                            <div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div>
                           </div>
-                          {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-bold">接單</button>}
-                          {isDone && <CheckCircle2 className="text-green-300" size={24}/>}
                         </div>
-                      )
-                    })
-                  }
-                  {allTasks.length > allTasksLimit && (
-                    <button onClick={() => setAllTasksLimit(l => l + 5)} className="w-full p-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 hover:bg-gray-100 transition-colors">查看更多</button>
-                  )}
-                </div>
-              )}
-            </section>
+                        {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200">接單</button>}
+                        {isDone && <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>}
+                      </div>
+                    )
+                  })
+                }
+                {allTasks.length > allTasksLimit && <button onClick={() => setAllTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 rounded-xl">查看更多</button>}
+              </div>
+            )}
           </div>
         )}
 
@@ -708,7 +688,6 @@ export default function RoomieTaskApp() {
                            assigneeOrder: c.assigneeOrder || users.map(u => u.id)
                          }); 
                          setIsEditingConfig(true); 
-                         setFormError('');
                       }}/>
                       <Trash2 size={20} className="text-red-500 cursor-pointer" onClick={() => setDeleteTarget({ type: 'config', id: c.id })}/>
                     </div>
@@ -757,7 +736,7 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Reset Modal */}
+      {/* Reset Modal (Red Style) */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
@@ -790,10 +769,10 @@ export default function RoomieTaskApp() {
       {/* Edit Config Modal */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5">
             <div className="flex justify-between items-center border-b pb-4">
               <h2 className="font-bold text-xl">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
-              <button onClick={() => { setIsEditingConfig(false); setFormError(''); }} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
             </div>
             
             <div className="flex gap-4 relative">
