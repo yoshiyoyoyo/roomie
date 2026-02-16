@@ -12,6 +12,9 @@ import {
 // ⚙️ 系統設定
 // ==========================================
 const LIFF_ID = "2009134573-7SuphV8b"; 
+// 🔥 每次資料庫大清空，改這個版號，使用者的快取就會自動被清掉
+const APP_VERSION = "v1_db_reset_2024_new"; 
+
 const firebaseConfig = {
   apiKey: "AIzaSyBBiEaI_-oH34YLpB4xmlJljyOtxz-yty4",
   authDomain: "roomie-task.firebaseapp.com",
@@ -33,11 +36,22 @@ const addDays = (dateStr, days) => {
   return result.toISOString().split('T')[0];
 };
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+// 🔥 改良版存取函式：加入版本檢查
 const getSavedGroups = () => {
-  try { return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); } catch (e) { return []; }
+  try { 
+    // 檢查版本
+    const savedVer = localStorage.getItem('app_version');
+    if (savedVer !== APP_VERSION) {
+        console.log("發現舊版本資料，執行自動清洗...");
+        localStorage.clear(); // 清空舊資料
+        localStorage.setItem('app_version', APP_VERSION); // 寫入新版本
+        return [];
+    }
+    return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); 
+  } catch (e) { return []; }
 };
 
-// Emoji 列表
 const EMOJI_LIST = [
   "🧹", "🗑️", "🍽️", "🧺", "🚽", "🍳", "🛒", "📦", "✨", "🐶", 
   "🐱", "🪴", "🚿", "🧽", "🧼", "🪣", "🪟", "🔧", "💡", "🛋️",
@@ -99,6 +113,13 @@ export default function RoomieTaskApp() {
   // 🚀 初始化
   // ==========================================
   useEffect(() => {
+    // 確保版本一致
+    const savedVer = localStorage.getItem('app_version');
+    if (savedVer !== APP_VERSION) {
+        localStorage.clear();
+        localStorage.setItem('app_version', APP_VERSION);
+    }
+
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
     if (isLocal) {
@@ -164,7 +185,6 @@ export default function RoomieTaskApp() {
     try {
       const snapshot = await get(ref(db, `groups/${gId}`));
       if (!snapshot.exists()) {
-         // DB 無此群組 -> 移除本地紀錄 -> 回首頁
          const saved = getSavedGroups();
          const newGroups = saved.filter(g => g.id !== gId);
          localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
@@ -173,6 +193,8 @@ export default function RoomieTaskApp() {
          setLoading(false);
          setGroupId(null);
          alert("此空間已不存在");
+         // 回到首頁並清除 URL
+         window.history.pushState({}, '', window.location.pathname);
          return;
       }
       await checkAndGenerateTasks(gId, snapshot.val()); 
@@ -192,16 +214,9 @@ export default function RoomieTaskApp() {
 
       const data = snap.val();
       if (data) {
-        // 🔥 關鍵邏輯：判斷是「新加入」還是「被踢出」
-        const isMember = user && user.id && data.users && data.users[user.id];
-        
-        if (!isMember) {
+        if (user && user.id && (!data.users || !data.users[user.id])) {
             const saved = getSavedGroups();
-            const isLocalKnown = saved.find(g => g.id === gId);
-
-            if (isLocalKnown) {
-                // 情境 A: 本地有紀錄，但 DB 沒人 -> 代表被踢出
-                console.log("您已被移除");
+            if (saved.find(g => g.id === gId)) {
                 const newGroups = saved.filter(g => g.id !== gId);
                 localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
                 setMyGroups(newGroups);
@@ -209,20 +224,17 @@ export default function RoomieTaskApp() {
                 setLoading(false);
                 return;
             } else {
-                // 情境 B: 本地沒紀錄，DB 沒人 -> 代表是新點擊邀請連結 -> 執行加入
-                console.log("新成員，執行加入...");
                 registerMember(gId, user);
-                // 這裡不 return，繼續跑下面的渲染，等待下一次 onValue 更新 users
             }
         }
 
-        const safeUsers = data.users ? Object.values(data.users).filter(u => u) : [];
+        const safeUsers = data.users ? Object.values(data.users).filter(u => u && u.id) : [];
         setUsers(safeUsers);
         
-        const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs).filter(c => c) : [];
+        const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs).filter(c => c && c.id) : [];
         setTaskConfigs(safeConfigs);
         
-        const safeTasks = data.tasks ? Object.values(data.tasks).filter(t => t) : [];
+        const safeTasks = data.tasks ? Object.values(data.tasks).filter(t => t && t.id && t.date) : [];
         setCurrentCycleTasks(safeTasks.sort((a,b) => (a.date || '').localeCompare(b.date || '')));
         
         const safeLogs = data.logs ? Object.values(data.logs).filter(l => l).sort((a,b) => b.id - a.id) : [];
@@ -230,8 +242,7 @@ export default function RoomieTaskApp() {
         
         setGroupName(data.metadata?.name || '我的空間');
         
-        // 只有確定是成員時，才同步本地列表
-        if (isMember && !isQuittingRef.current) {
+        if (user && user.id && data.users && data.users[user.id] && !isQuittingRef.current) {
             const saved = getSavedGroups();
             const currentName = data.metadata?.name || '新空間';
             const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
@@ -334,29 +345,22 @@ export default function RoomieTaskApp() {
     } catch (e) { alert("重置失敗"); }
   };
 
-  // 🔥 關鍵修復：退出時直接操作 LocalStorage，不依賴可能過時的 State
   const handleQuitGroupConfirm = async () => {
     isQuittingRef.current = true; 
     if (dbRef.current) off(dbRef.current);
-
     try {
       const logId = Date.now();
       await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 離開了空間`, type: 'warning', time: new Date().toLocaleTimeString() });
       await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
       
-      // 直接讀取最新 LS -> 過濾 -> 寫回
-      const currentSaved = getSavedGroups();
+      const currentSaved = getSavedGroups(); // 重新讀取確保準確
       const newGroups = currentSaved.filter(g => g.id !== groupId);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
       setMyGroups(newGroups);
       
       setShowQuitModal(false);
       handleGoHome();
-
-    } catch (e) {
-      alert("退出失敗，請重試");
-      isQuittingRef.current = false;
-    }
+    } catch (e) { alert("退出失敗，請重試"); isQuittingRef.current = false; }
   };
 
   const handleCreateGroupConfirm = async () => {
@@ -594,7 +598,7 @@ export default function RoomieTaskApp() {
           )}
         </div>
       </div>
-      <button onClick={() => { setNewGroupName(`${currentUser?.name} 的家`); setShowCreateGroupModal(true); }} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all text-lg">建立新空間</button>
+      <button onClick={() => { setNewGroupName(`${currentUser?.name || '我'} 的家`); setShowCreateGroupModal(true); }} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all text-lg">建立新空間</button>
       
       {showCreateGroupModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -695,6 +699,7 @@ export default function RoomieTaskApp() {
           </div>
         )}
 
+        {/* ... Other Views (Wallet, History, Settings) ... */}
         {view === 'wallet' && (
           <div className="space-y-6">
             <div className="bg-[#28C8C8] p-8 rounded-3xl text-white shadow-lg shadow-[#28C8C8]/30">
@@ -792,7 +797,7 @@ export default function RoomieTaskApp() {
                          setConfigForm({ 
                            ...c, 
                            freq: freqNum, 
-                           nextDate: getTodayString(), 
+                           nextDate: c.nextDate || getTodayString(), 
                            assigneeOrder: c.assigneeOrder || users.map(u => u.id),
                            nextAssigneeId: c.nextAssigneeId
                          }); 
