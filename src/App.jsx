@@ -102,7 +102,7 @@ export default function RoomieTaskApp() {
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
     if (isLocal) {
-      console.log("🔧 本地開發模式：使用模擬帳號");
+      console.log("🔧 本地開發模式");
       const mockUser = { 
         userId: "local-tester-001", 
         displayName: "本地測試員", 
@@ -168,6 +168,7 @@ export default function RoomieTaskApp() {
          const newGroups = saved.filter(g => g.id !== gId);
          localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
          setMyGroups(newGroups);
+         
          setLoading(false);
          setGroupId(null);
          alert("此空間已不存在");
@@ -182,7 +183,6 @@ export default function RoomieTaskApp() {
     const groupRef = ref(db, `groups/${gId}`);
     dbRef.current = groupRef;
 
-    // SPA URL Update
     const newUrl = `${window.location.pathname}?g=${gId}`;
     window.history.pushState({ path: newUrl }, '', newUrl);
 
@@ -191,19 +191,18 @@ export default function RoomieTaskApp() {
 
       const data = snap.val();
       if (data) {
-        if (user && user.id && (!data.users || !data.users[user.id])) {
-            const saved = getSavedGroups();
-            const newGroups = saved.filter(g => g.id !== gId);
-            localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
-            setMyGroups(newGroups);
-            setViewState('landing');
-            setLoading(false);
-            return;
-        }
-
         const safeUsers = data.users ? Object.values(data.users).filter(u => u) : [];
         setUsers(safeUsers);
         
+        // 🔥 修復邀請連結無法進入：
+        // 如果我不在成員名單中，代表我是新來的 -> 執行加入 (Register)
+        // 舊邏輯會把我踢回家，現在改為自動加入
+        if (user && user.id && (!data.users || !data.users[user.id])) {
+             console.log("新成員加入中...");
+             registerMember(gId, user);
+             // 不 return，繼續渲染畫面，等待下一次 onValue 更新
+        }
+
         const safeConfigs = data.taskConfigs ? Object.values(data.taskConfigs).filter(c => c) : [];
         setTaskConfigs(safeConfigs);
         
@@ -215,19 +214,19 @@ export default function RoomieTaskApp() {
         
         setGroupName(data.metadata?.name || '我的空間');
         
-        const saved = getSavedGroups();
-        const currentName = data.metadata?.name || '新空間';
-        
-        const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
-        if (!saved.find(g => g.id === gId) || isNameDiff) {
-          const otherGroups = saved.filter(g => g.id !== gId);
-          const updated = [{ id: gId, name: currentName }, ...otherGroups].slice(0, 10);
-          localStorage.setItem('roomie_groups', JSON.stringify(updated));
-          setMyGroups(updated);
-        }
-
-        if (user && user.id && data.users && data.users[user.id]) {
-             registerMember(gId, user);
+        // 🔥 修復退出後鬼影殘留：
+        // 只有當我「確定在名單內」且「沒有正在退出」時，才更新 LocalStorage
+        if (user && user.id && data.users && data.users[user.id] && !isQuittingRef.current) {
+            const saved = getSavedGroups();
+            const currentName = data.metadata?.name || '新空間';
+            const isNameDiff = saved.find(g => g.id === gId)?.name !== currentName;
+            
+            if (!saved.find(g => g.id === gId) || isNameDiff) {
+              const otherGroups = saved.filter(g => g.id !== gId);
+              const updated = [{ id: gId, name: currentName }, ...otherGroups].slice(0, 10);
+              localStorage.setItem('roomie_groups', JSON.stringify(updated));
+              setMyGroups(updated);
+            }
         }
         
         setViewState('app');
@@ -404,7 +403,6 @@ export default function RoomieTaskApp() {
     setIsEditingConfig(true);
   };
 
-  // 🔥 Smart Sync: 確保編輯後不會消失
   const saveConfig = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -424,27 +422,21 @@ export default function RoomieTaskApp() {
 
       const updates = {};
 
-      // 1. 識別舊任務與重生點
       let earliestPendingDate = null;
       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
       
       if (tasksSnap.exists()) {
           const allTasks = tasksSnap.val();
-          // 找出屬於這個 Config 的舊任務
           const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done');
-          
           if (relatedTasks.length > 0) {
               relatedTasks.sort((a,b) => a.date.localeCompare(b.date));
               earliestPendingDate = relatedTasks[0].date;
-              
-              // 標記刪除舊任務 (如果我們下面產生了同 ID 的新任務，Firebase 會自動覆蓋，不會真的刪除)
               relatedTasks.forEach(t => {
                   updates[`groups/${groupId}/tasks/${t.id}`] = null;
               });
           }
       }
 
-      // 2. 決定開始日期 (若為編輯且有舊任務，接續排班；否則用表單日期)
       let nextDate;
       if (editingConfigId && earliestPendingDate) {
           nextDate = earliestPendingDate; 
@@ -457,24 +449,19 @@ export default function RoomieTaskApp() {
           runningAssigneeId = configForm.nextAssigneeId;
       }
 
-      // 3. 產生新任務
       const limitDate = addDays(getTodayString(), 45);
       let loopCount = 0;
 
       while (nextDate <= limitDate && loopCount < 50) {
           loopCount++;
           const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
-          
-          // 直接寫入物件，若 key 相同，會覆蓋上面的 null，達到「更新」而非「消失」
           updates[`groups/${groupId}/tasks/${tid}`] = {
               id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
               date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
           };
-
           const currIdx = assigneeOrder.indexOf(runningAssigneeId);
           const nextIdx = (currIdx + 1) % assigneeOrder.length;
           runningAssigneeId = assigneeOrder[nextIdx];
-
           nextDate = addDays(nextDate, freqNum);
       }
 
@@ -486,7 +473,6 @@ export default function RoomieTaskApp() {
 
       await update(ref(db), updates);
       
-      // Log
       const logId = Date.now();
       const actionMsg = editingConfigId ? `編輯了家事：${configForm.name}` : `新增了家事：${configForm.name}`;
       await set(ref(db, `groups/${groupId}/logs/${logId}`), { 
@@ -555,12 +541,6 @@ export default function RoomieTaskApp() {
     await update(ref(db), updates);
     setAlertMsg("結帳成功！");
   };
-
-  const limitDate = addDays(getTodayString(), 45);
-  const validConfigIds = taskConfigs.map(c => c.id);
-  const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' || t.date >= getTodayString()));
-  const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
-  const allTasks = visibleTasks;
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#28C8C8]"/></div>;
 
@@ -684,7 +664,6 @@ export default function RoomieTaskApp() {
           </div>
         )}
 
-        {/* ... Other Views ... */}
         {view === 'wallet' && (
           <div className="space-y-6">
             <div className="bg-[#28C8C8] p-8 rounded-3xl text-white shadow-lg shadow-[#28C8C8]/30">
