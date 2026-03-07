@@ -110,7 +110,7 @@ export default function RoomieTaskApp() {
   const [isSaving, setIsSaving] = useState(false);
 
   // ==========================================
-  // 🚀 初始化
+  // 🚀 初始化 (已修復：解決重複套疊與 catch undefined 問題)
   // ==========================================
   useEffect(() => {
     // 確保版本一致
@@ -119,7 +119,7 @@ export default function RoomieTaskApp() {
         localStorage.clear();
         localStorage.setItem('app_version', APP_VERSION);
     }
-useEffect(() => {
+
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
     if (isLocal) {
@@ -138,55 +138,64 @@ useEffect(() => {
       return; 
     }
 
-    liff.init({ liffId: LIFF_ID }).then(async () => {
-      if (!liff.isLoggedIn()) { 
-        liff.login(); 
-        return; 
-      }
-      
+    let isMounted = true; // 防止 React 嚴格模式重複執行導致狀態錯亂
+
+    const initLiff = async () => {
       try {
-        const profile = await liff.getProfile();
-        const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
-        setCurrentUser(user);
-        setMyGroups(getSavedGroups());
+        // 使用 await 替代 .then()，避開 undefined.catch 的 Bug
+        await liff.init({ liffId: LIFF_ID });
+        
+        if (!isMounted) return;
 
-        const gId = new URLSearchParams(window.location.search).get('g');
-        if (gId) enterGroup(gId, user); else setLoading(false);
-      } catch (profileError) {
-        console.error("LIFF getProfile Error:", profileError);
-        liff.logout();
-        window.location.reload();
-      }
+        if (!liff.isLoggedIn()) { 
+          // 確保登入後導回當前網址 (保留 ?g=xxx 參數)
+          liff.login({ redirectUri: window.location.href }); 
+          return; 
+        }
+        
+        try {
+          const profile = await liff.getProfile();
+          if (!isMounted) return;
 
-    }).catch((err) => {
-      console.error("LIFF Init Error:", err);
-      if (err.message && err.message.toLowerCase().includes("expired")) {
-        liff.logout();
-        window.location.reload();
-        return;
+          const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
+          setCurrentUser(user);
+          setMyGroups(getSavedGroups());
+
+          const gId = new URLSearchParams(window.location.search).get('g');
+          if (gId) enterGroup(gId, user); else setLoading(false);
+          
+        } catch (profileError) {
+          console.error("LIFF getProfile 失敗:", profileError);
+          liff.logout();
+          window.location.reload();
+        }
+
+      } catch (err) {
+        console.error("LIFF 初始化失敗:", err);
+        // 攔截 Token 過期問題
+        if (err.message && err.message.toLowerCase().includes("expired")) {
+          liff.logout();
+          window.location.reload();
+          return;
+        }
+        if (isMounted) {
+          setLoading(false);
+          alert(`系統錯誤: ${err?.message || "無法載入 LINE 服務"}`);
+        }
       }
-      setLoading(false);
-      if (!isLocal) alert(`登入錯誤: ${err?.message}`);
-    });
+    };
+
+    initLiff();
 
     return () => {
+      isMounted = false;
       if (dbRef.current) off(dbRef.current);
     };
   }, []);
 
-    }).catch((err) => {
-      console.error("LIFF Init Error:", err);
-      
-      // 核心修復：攔截 iOS 常見的 Token 過期錯誤
-      if (err.message && err.message.toLowerCase().includes("expired")) {
-        liff.logout(); // 強制清除壞掉的快取
-        window.location.reload(); // 重新整理頁面，讓程式重新跑 init 並觸發 liff.login()
-        return;
-      }
-
-      setLoading(false);
-      if (!isLocal) alert(`登入錯誤: ${err?.message}`);
-    });
+  // ==========================================
+  // 🚀 以下為原本的邏輯
+  // ==========================================
 
   const handleNav = (targetView) => {
     setView(targetView);
@@ -727,7 +736,6 @@ useEffect(() => {
           </div>
         )}
 
-        {/* ... Other Views (Wallet, History, Settings) ... */}
         {view === 'wallet' && (
           <div className="space-y-6">
             <div className="bg-[#28C8C8] p-8 rounded-3xl text-white shadow-lg shadow-[#28C8C8]/30">
