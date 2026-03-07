@@ -142,13 +142,11 @@ export default function RoomieTaskApp() {
 
     const initLiff = async () => {
       try {
-        // 使用 await 替代 .then()，避開 undefined.catch 的 Bug
         await liff.init({ liffId: LIFF_ID });
         
         if (!isMounted) return;
 
         if (!liff.isLoggedIn()) { 
-          // 確保登入後導回當前網址 (保留 ?g=xxx 參數)
           liff.login({ redirectUri: window.location.href }); 
           return; 
         }
@@ -159,7 +157,24 @@ export default function RoomieTaskApp() {
 
           const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
           setCurrentUser(user);
+          
+          // 先用本地快取墊檔，讓畫面秒開
           setMyGroups(getSavedGroups());
+
+          // 🌟 新增：從雲端資料庫撈取真實的群組名單，解決跨瀏覽器空清單問題
+          const snap = await get(ref(db, 'groups'));
+          if (snap.exists() && isMounted) {
+            const allGroups = snap.val();
+            const joinedGroups = [];
+            for (const [gId, groupData] of Object.entries(allGroups)) {
+              if (groupData.users && groupData.users[user.id]) {
+                joinedGroups.push({ id: gId, name: groupData.metadata?.name || '我的空間' });
+              }
+            }
+            // 更新畫面並同步回本地快取
+            setMyGroups(joinedGroups);
+            localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
+          }
 
           const gId = new URLSearchParams(window.location.search).get('g');
           if (gId) enterGroup(gId, user); else setLoading(false);
@@ -172,7 +187,6 @@ export default function RoomieTaskApp() {
 
       } catch (err) {
         console.error("LIFF 初始化失敗:", err);
-        // 攔截 Token 過期問題
         if (err.message && err.message.toLowerCase().includes("expired")) {
           liff.logout();
           window.location.reload();
