@@ -114,6 +114,7 @@ export default function RoomieTaskApp() {
   // ==========================================
   useEffect(() => {
     // 確保版本一致
+   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
     if (savedVer !== APP_VERSION) {
         localStorage.clear();
@@ -138,7 +139,7 @@ export default function RoomieTaskApp() {
       return; 
     }
 
-    let isMounted = true; // 防止 React 嚴格模式重複執行導致狀態錯亂
+    let isMounted = true; 
 
     const initLiff = async () => {
       try {
@@ -147,6 +148,12 @@ export default function RoomieTaskApp() {
         if (!isMounted) return;
 
         if (!liff.isLoggedIn()) { 
+          // 防無限迴圈機制：若網址已有 liff.state，代表剛從登入頁跳回卻讀不到狀態，終止執行
+          if (window.location.search.includes('liff.state')) {
+             setLoading(false);
+             alert("瀏覽器阻擋了登入狀態，請關閉私密瀏覽或使用 LINE 開啟");
+             return;
+          }
           liff.login({ redirectUri: window.location.href }); 
           return; 
         }
@@ -157,27 +164,29 @@ export default function RoomieTaskApp() {
 
           const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
           setCurrentUser(user);
-          
-          // 先用本地快取墊檔，讓畫面秒開
           setMyGroups(getSavedGroups());
 
-          // 🌟 新增：從雲端資料庫撈取真實的群組名單，解決跨瀏覽器空清單問題
-          const snap = await get(ref(db, 'groups'));
-          if (snap.exists() && isMounted) {
-            const allGroups = snap.val();
-            const joinedGroups = [];
-            for (const [gId, groupData] of Object.entries(allGroups)) {
-              if (groupData.users && groupData.users[user.id]) {
-                joinedGroups.push({ id: gId, name: groupData.metadata?.name || '我的空間' });
+          // 獨立包裝雲端同步，避免錯誤影響主程式
+          try {
+            const snap = await get(ref(db, 'groups'));
+            if (snap.exists() && isMounted) {
+              const allGroups = snap.val();
+              const joinedGroups = [];
+              for (const [gId, groupData] of Object.entries(allGroups)) {
+                if (groupData && groupData.users && groupData.users[user.id]) {
+                  joinedGroups.push({ id: gId, name: groupData.metadata?.name || '我的空間' });
+                }
               }
+              setMyGroups(joinedGroups);
+              localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
             }
-            // 更新畫面並同步回本地快取
-            setMyGroups(joinedGroups);
-            localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
+          } catch (dbError) {
+            console.error("同步群組失敗:", dbError);
           }
 
           const gId = new URLSearchParams(window.location.search).get('g');
-          if (gId) enterGroup(gId, user); else setLoading(false);
+          if (gId) enterGroup(gId, user); 
+          else setLoading(false);
           
         } catch (profileError) {
           console.error("LIFF getProfile 失敗:", profileError);
@@ -194,10 +203,18 @@ export default function RoomieTaskApp() {
         }
         if (isMounted) {
           setLoading(false);
-          alert(`系統錯誤: ${err?.message || "無法載入 LINE 服務"}`);
+          alert(`系統錯誤: ${err?.message}`);
         }
       }
     };
+
+    initLiff();
+
+    return () => {
+      isMounted = false;
+      if (dbRef.current) off(dbRef.current);
+    };
+  }, []);
 
     initLiff();
 
