@@ -9,10 +9,9 @@ import {
 } from 'lucide-react';
 
 // ==========================================
-// ⚙️ 系統設定
+// 系統設定
 // ==========================================
 const LIFF_ID = "2009134573-7SuphV8b"; 
-// 🔥 每次資料庫大清空，改這個版號，使用者的快取就會自動被清掉
 const APP_VERSION = "v1_db_reset_2024_new"; 
 
 const firebaseConfig = {
@@ -28,7 +27,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// 工具函式
 const getTodayString = () => new Date().toISOString().split('T')[0];
 const addDays = (dateStr, days) => {
   const result = new Date(dateStr);
@@ -37,15 +35,12 @@ const addDays = (dateStr, days) => {
 };
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// 🔥 改良版存取函式：加入版本檢查
 const getSavedGroups = () => {
   try { 
-    // 檢查版本
     const savedVer = localStorage.getItem('app_version');
     if (savedVer !== APP_VERSION) {
-        console.log("發現舊版本資料，執行自動清洗...");
-        localStorage.clear(); // 清空舊資料
-        localStorage.setItem('app_version', APP_VERSION); // 寫入新版本
+        localStorage.clear(); 
+        localStorage.setItem('app_version', APP_VERSION); 
         return [];
     }
     return JSON.parse(localStorage.getItem('roomie_groups') || '[]'); 
@@ -66,27 +61,22 @@ export default function RoomieTaskApp() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   
-  // Data
   const [users, setUsers] = useState([]);
   const [taskConfigs, setTaskConfigs] = useState([]);
   const [currentCycleTasks, setCurrentCycleTasks] = useState([]);
   const [logs, setLogs] = useState([]);
   const [myGroups, setMyGroups] = useState([]);
 
-  // UI Views
   const [view, setView] = useState('roster');
   const [rosterTab, setRosterTab] = useState('mine');
   const mainScrollRef = useRef(null);
   
-  // Ref for cleanup
   const isQuittingRef = useRef(false);
   const dbRef = useRef(null);
 
-  // 列表控制
   const [myTasksLimit, setMyTasksLimit] = useState(5);
   const [allTasksLimit, setAllTasksLimit] = useState(5);
 
-  // Modals
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -98,7 +88,6 @@ export default function RoomieTaskApp() {
   const [alertMsg, setAlertMsg] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  // Config Editor
   const [isEditingConfig, setIsEditingConfig] = useState(false);
   const [editingConfigId, setEditingConfigId] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -110,11 +99,9 @@ export default function RoomieTaskApp() {
   const [isSaving, setIsSaving] = useState(false);
 
   // ==========================================
-  // 🚀 初始化 (已修復：解決重複套疊與 catch undefined 問題)
+  // 初始化邏輯
   // ==========================================
   useEffect(() => {
-    // 確保版本一致
-   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
     if (savedVer !== APP_VERSION) {
         localStorage.clear();
@@ -124,7 +111,6 @@ export default function RoomieTaskApp() {
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
     if (isLocal) {
-      console.log("🔧 本地開發模式");
       const mockUser = { 
         userId: "local-tester-001", 
         displayName: "本地測試員", 
@@ -148,7 +134,6 @@ export default function RoomieTaskApp() {
         if (!isMounted) return;
 
         if (!liff.isLoggedIn()) { 
-          // 防無限迴圈機制：若網址已有 liff.state，代表剛從登入頁跳回卻讀不到狀態，終止執行
           if (window.location.search.includes('liff.state')) {
              setLoading(false);
              alert("瀏覽器阻擋了登入狀態，請關閉私密瀏覽或使用 LINE 開啟");
@@ -166,7 +151,6 @@ export default function RoomieTaskApp() {
           setCurrentUser(user);
           setMyGroups(getSavedGroups());
 
-          // 獨立包裝雲端同步，避免錯誤影響主程式
           try {
             const snap = await get(ref(db, 'groups'));
             if (snap.exists() && isMounted) {
@@ -216,18 +200,6 @@ export default function RoomieTaskApp() {
     };
   }, []);
 
-    initLiff();
-
-    return () => {
-      isMounted = false;
-      if (dbRef.current) off(dbRef.current);
-    };
-  }, []);
-
-  // ==========================================
-  // 🚀 以下為原本的邏輯
-  // ==========================================
-
   const handleNav = (targetView) => {
     setView(targetView);
     setIsUserMenuOpen(false);
@@ -261,7 +233,6 @@ export default function RoomieTaskApp() {
          setLoading(false);
          setGroupId(null);
          alert("此空間已不存在");
-         // 回到首頁並清除 URL
          window.history.pushState({}, '', window.location.pathname);
          return;
       }
@@ -421,7 +392,7 @@ export default function RoomieTaskApp() {
       await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 離開了空間`, type: 'warning', time: new Date().toLocaleTimeString() });
       await remove(ref(db, `groups/${groupId}/users/${currentUser.id}`));
       
-      const currentSaved = getSavedGroups(); // 重新讀取確保準確
+      const currentSaved = getSavedGroups(); 
       const newGroups = currentSaved.filter(g => g.id !== groupId);
       localStorage.setItem('roomie_groups', JSON.stringify(newGroups));
       setMyGroups(newGroups);
@@ -887,8 +858,6 @@ export default function RoomieTaskApp() {
       </nav>
 
       {/* --- Modals --- */}
-
-      {/* Rename Modal */}
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
@@ -902,7 +871,6 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Quit Modal */}
       {showQuitModal && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
@@ -917,7 +885,6 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Reset Modal (Red Style) */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
@@ -932,7 +899,6 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Delete Confirm Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
@@ -947,7 +913,6 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Edit Config Modal */}
       {isEditingConfig && (
         <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5">
@@ -984,7 +949,7 @@ export default function RoomieTaskApp() {
               <span className="text-sm font-bold text-gray-400 ml-1">排班人員順序</span>
               <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-4 px-2 pt-2">
                 {users.map(u => {
-                  if (!u || !u.id) return null; // 防呆
+                  if (!u || !u.id) return null; 
                   const idx = (configForm.assigneeOrder || []).indexOf(u.id);
                   const isSelected = idx !== -1;
                   return (
@@ -1007,7 +972,6 @@ export default function RoomieTaskApp() {
         </div>
       )}
 
-      {/* Alert */}
       {alertMsg && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-6" onClick={() => setAlertMsg(null)}>
           <div className="bg-white w-full max-w-xs rounded-3xl p-6 text-center animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
