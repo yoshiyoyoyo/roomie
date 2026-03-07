@@ -119,7 +119,7 @@ export default function RoomieTaskApp() {
         localStorage.clear();
         localStorage.setItem('app_version', APP_VERSION);
     }
-
+useEffect(() => {
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
     if (isLocal) {
@@ -139,26 +139,54 @@ export default function RoomieTaskApp() {
     }
 
     liff.init({ liffId: LIFF_ID }).then(async () => {
-      if (!liff.isLoggedIn()) { liff.login(); return; }
+      if (!liff.isLoggedIn()) { 
+        liff.login(); 
+        return; 
+      }
       
-      const profile = await liff.getProfile();
-      const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
-      setCurrentUser(user);
-      setMyGroups(getSavedGroups());
+      try {
+        const profile = await liff.getProfile();
+        const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
+        setCurrentUser(user);
+        setMyGroups(getSavedGroups());
 
-      const gId = new URLSearchParams(window.location.search).get('g');
-      if (gId) enterGroup(gId, user); else setLoading(false);
+        const gId = new URLSearchParams(window.location.search).get('g');
+        if (gId) enterGroup(gId, user); else setLoading(false);
+      } catch (profileError) {
+        console.error("LIFF getProfile Error:", profileError);
+        liff.logout();
+        window.location.reload();
+      }
 
     }).catch((err) => {
-      console.error("LIFF Error:", err);
+      console.error("LIFF Init Error:", err);
+      if (err.message && err.message.toLowerCase().includes("expired")) {
+        liff.logout();
+        window.location.reload();
+        return;
+      }
       setLoading(false);
-      if (!isLocal) alert(`LIFF Error: ${err?.message}`);
+      if (!isLocal) alert(`登入錯誤: ${err?.message}`);
     });
 
     return () => {
       if (dbRef.current) off(dbRef.current);
     };
   }, []);
+
+    }).catch((err) => {
+      console.error("LIFF Init Error:", err);
+      
+      // 核心修復：攔截 iOS 常見的 Token 過期錯誤
+      if (err.message && err.message.toLowerCase().includes("expired")) {
+        liff.logout(); // 強制清除壞掉的快取
+        window.location.reload(); // 重新整理頁面，讓程式重新跑 init 並觸發 liff.login()
+        return;
+      }
+
+      setLoading(false);
+      if (!isLocal) alert(`登入錯誤: ${err?.message}`);
+    });
 
   const handleNav = (targetView) => {
     setView(targetView);
