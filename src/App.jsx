@@ -735,7 +735,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {allTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
+                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
@@ -784,7 +784,7 @@ export default function RoomieTaskApp() {
             <div className="bg-white rounded-2xl border shadow-sm p-5">
               <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><AlertCircle size={18} className="text-[#28C8C8]"/> 還款建議</h3>
               <div className="space-y-3">
-                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">目前帳務完美平衡 ✨</p> : 
+                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">誰也沒欠誰 ✨</p> : 
                    calculateSettlements().map((tx, idx) => (
                      <div key={idx} className="bg-white border border-gray-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
                         <div className="flex flex-col gap-1 text-sm font-bold text-gray-700">
