@@ -912,15 +912,9 @@ export default function RoomieTaskApp() {
              <h3 className="font-bold text-xl mb-2 text-gray-800">
                {taskActionConfirm.action === 'complete' && '確定完成任務？'}
                {taskActionConfirm.action === 'release' && '確定沒空做嗎？'}
-               {taskActionConfirm.action === 'claim' && (
-  <>
-    接手「{taskActionConfirm.task.name}」完成後將獲得 ${taskActionConfirm.task.price}！<br />
-    若未依照規定完成，將會扣除相應金額作為懲罰喔！
-  </>
-)}
+               {taskActionConfirm.action === 'claim' && '確定要接下此任務？'}
              </h3>
-             <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
-               <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
+<p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
   {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
   {taskActionConfirm.action === 'release' && `釋出「${taskActionConfirm.task.name}」將扣除 $${taskActionConfirm.task.price} 轉為賞金，並等待其他人接單`}
   {taskActionConfirm.action === 'claim' && (
@@ -930,7 +924,6 @@ export default function RoomieTaskApp() {
     </>
   )}
 </p>
-             </p>
              <div className="flex gap-3">
                <button onClick={() => setTaskActionConfirm(null)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
                <button onClick={executeTaskAction} className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg transition-colors ${
