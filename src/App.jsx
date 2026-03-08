@@ -698,14 +698,6 @@ export default function RoomieTaskApp() {
 {view === 'roster' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
-              
-              {/* 新增的按鈕區塊 */}
-              <div className="flex justify-end mb-3 px-1">
-                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-[#28C8C8]/20 flex items-center gap-1.5 active:scale-95 transition-all">
-                  <Plus size={16}/> 新增家事
-                </button>
-              </div>
-
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
                 <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>近期待辦</button>
                 <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>任務列表</button>
@@ -715,7 +707,10 @@ export default function RoomieTaskApp() {
             {rosterTab === 'mine' && (
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
-                  <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed border-gray-200">目前沒有任務 🎉</div> :
+                  <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                    <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
+                    <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
+                  </div> :
                   myTasks.slice(0, myTasksLimit).map(task => (
                     <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between hover:border-[#28C8C8]/30 transition-colors">
                       <div className="flex items-center gap-4">
@@ -723,10 +718,7 @@ export default function RoomieTaskApp() {
                         <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div></div>
                       </div>
                       <div className="flex gap-2">
-                        {/* 🌟 修改：釋出按鈕觸發彈窗 */}
                         <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors">沒空</button>
-                        
-                        {/* 🌟 修改：完成按鈕觸發彈窗 (保留未來任務防呆) */}
                         <button onClick={() => {
                           if (task.date > getTodayString()) setAlertMsg("只能完成今天以前的任務喔！");
                           else setTaskActionConfirm({ action: 'complete', task });
@@ -741,7 +733,11 @@ export default function RoomieTaskApp() {
 
             {rosterTab === 'all' && (
               <div className="space-y-3">
-                {allTasks.length === 0 ? <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed border-gray-200">目前沒有任務 🎉</div> :
+                {allTasks.length === 0 ? 
+                  <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                    <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
+                    <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
+                  </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
                     const isOpen = task.status === 'open';
                     const isDone = task.status === 'done';
@@ -762,7 +758,6 @@ export default function RoomieTaskApp() {
                             </div>
                           </div>
                         </div>
-                        {/* 🌟 修改：接單按鈕觸發彈窗 */}
                         {isOpen && <button onClick={() => setTaskActionConfirm({ action: 'claim', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all">接單</button>}
                         {isDone && <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>}
                       </div>
