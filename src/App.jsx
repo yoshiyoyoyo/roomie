@@ -918,14 +918,14 @@ export default function RoomieTaskApp() {
   {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
   {taskActionConfirm.action === 'release' && (
     <>
-      釋出「{taskActionConfirm.task.name}」將扣除 ${taskActionConfirm.task.price} <br />
-      轉為賞金並等待其他人接單
+      釋出「{taskActionConfirm.task.name}」將扣除 ${taskActionConfirm.task.price} 轉為賞金<br />
+      並等待其他人接單
     </>
   )}
   {taskActionConfirm.action === 'claim' && (
     <>
-      接手「{taskActionConfirm.task.name}」完成後將獲得 ${taskActionConfirm.task.price}！<br />
-      若未完成，將會扣除相應金額作為懲罰喔！
+      接手「{taskActionConfirm.task.name}」完成後將獲得 ${taskActionConfirm.task.price}<br />
+      若未完成，將會扣除相應金額作為懲罰喔
     </>
   )}
 </p>
