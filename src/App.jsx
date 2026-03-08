@@ -77,12 +77,16 @@ export default function RoomieTaskApp() {
   const [myTasksLimit, setMyTasksLimit] = useState(5);
   const [allTasksLimit, setAllTasksLimit] = useState(5);
 
+  // Modals
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [showQuitModal, setShowQuitModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-
+  
+  // 🌟 新增：任務操作確認彈窗 State
+  const [taskActionConfirm, setTaskActionConfirm] = useState(null); // { action: 'complete'|'release'|'claim', task: object }
+  
   const [newNameInput, setNewNameInput] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   
@@ -100,7 +104,7 @@ export default function RoomieTaskApp() {
   const [isSaving, setIsSaving] = useState(false);
 
   // ==========================================
-  // 🚀 初始化：強制每次登入自動雲端同步
+  // 🚀 初始化
   // ==========================================
   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
@@ -150,7 +154,6 @@ export default function RoomieTaskApp() {
           const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
           setCurrentUser(user);
 
-          // 🌟 核心修改：等待雲端同步完成後，才解除 Loading 狀態
           try {
             const snap = await get(ref(db, 'groups'));
             const joinedGroups = [];
@@ -162,19 +165,18 @@ export default function RoomieTaskApp() {
                 }
               }
             }
-            // 無論有沒有找到，都更新畫面與快取
             setMyGroups(joinedGroups);
             localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
           } catch (dbError) {
             console.error("強制同步群組失敗:", dbError);
-            setMyGroups(getSavedGroups()); // 失敗時才使用舊快取
+            setMyGroups(getSavedGroups());
           }
 
           const gId = new URLSearchParams(window.location.search).get('g');
           if (gId) {
             enterGroup(gId, user); 
           } else {
-            setLoading(false); // 同步且沒有群組ID時，才關閉 Loading 顯示首頁
+            setLoading(false);
           }
           
         } catch (profileError) {
@@ -205,9 +207,6 @@ export default function RoomieTaskApp() {
     };
   }, []);
 
-  // ==========================================
-  // 原有邏輯
-  // ==========================================
   const handleNav = (targetView) => {
     setView(targetView);
     setIsUserMenuOpen(false);
@@ -416,6 +415,17 @@ export default function RoomieTaskApp() {
     });
     setShowCreateGroupModal(false);
     enterGroup(gid, currentUser);
+  };
+
+  // 🌟 新增：統一執行任務操作的函式 (由確認彈窗觸發)
+  const executeTaskAction = async () => {
+    if (!taskActionConfirm) return;
+    const { action, task } = taskActionConfirm;
+    setTaskActionConfirm(null); // 先關閉彈窗
+    
+    if (action === 'complete') await completeTask(task);
+    if (action === 'release') await releaseTask(task);
+    if (action === 'claim') await claimTask(task);
   };
 
   const completeTask = async (task) => {
@@ -705,8 +715,14 @@ export default function RoomieTaskApp() {
                         <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div></div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => releaseTask(task)} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors">沒空</button>
-                        <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
+                        {/* 🌟 修改：釋出按鈕觸發彈窗 */}
+                        <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors">沒空</button>
+                        
+                        {/* 🌟 修改：完成按鈕觸發彈窗 (保留未來任務防呆) */}
+                        <button onClick={() => {
+                          if (task.date > getTodayString()) setAlertMsg("只能完成今天以前的任務喔！");
+                          else setTaskActionConfirm({ action: 'complete', task });
+                        }} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
                       </div>
                     </div>
                   ))
@@ -738,7 +754,8 @@ export default function RoomieTaskApp() {
                             </div>
                           </div>
                         </div>
-                        {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all">接單</button>}
+                        {/* 🌟 修改：接單按鈕觸發彈窗 */}
+                        {isOpen && <button onClick={() => setTaskActionConfirm({ action: 'claim', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all">接單</button>}
                         {isDone && <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>}
                       </div>
                     )
@@ -808,7 +825,6 @@ export default function RoomieTaskApp() {
                   <div key={log.id} className="relative pb-8 last:pb-2">
                     <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-[3px] border-white shadow-sm ${log.type === 'success' ? 'bg-green-500' : log.type === 'warning' ? 'bg-red-500' : 'bg-[#28C8C8]'}`}></div>
                     <div className="text-base text-gray-800 font-bold leading-tight bg-white p-3 rounded-xl shadow-sm border border-gray-50 -mt-2 ml-4 relative">
-                      {/* Triangle pointer */}
                       <div className="absolute w-3 h-3 bg-white border-t border-l border-gray-50 transform -rotate-45 -left-1.5 top-3"></div>
                       <span className="relative z-10">{log.msg}</span>
                     </div>
@@ -885,6 +901,74 @@ export default function RoomieTaskApp() {
       </nav>
 
       {/* --- Modals --- */}
+      
+      {/* 🌟 新增：任務操作確認彈窗 */}
+      {taskActionConfirm && (
+        <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setTaskActionConfirm(null)}>
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
+             <div className={`mb-4 flex justify-center w-20 h-20 mx-auto rounded-full items-center ${taskActionConfirm.action === 'release' ? 'bg-red-50 text-red-500' : 'bg-[#28C8C8]/10 text-[#28C8C8]'}`}>
+               {taskActionConfirm.action === 'release' ? <AlertCircle size={40}/> : <CheckCircle2 size={40}/>}
+             </div>
+             <h3 className="font-bold text-xl mb-2 text-gray-800">
+               {taskActionConfirm.action === 'complete' && '確定完成任務？'}
+               {taskActionConfirm.action === 'release' && '確定沒空做嗎？'}
+               {taskActionConfirm.action === 'claim' && '確定要接下此任務？'}
+             </h3>
+             <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
+               {taskActionConfirm.action === 'complete' && `您即將完成「${taskActionConfirm.task.name}」。`}
+               {taskActionConfirm.action === 'release' && `釋出「${taskActionConfirm.task.name}」將扣除 $${taskActionConfirm.task.price} 轉為賞金，並等待其他人接單。`}
+               {taskActionConfirm.action === 'claim' && `接手「${taskActionConfirm.task.name}」完成後將獲得 $${taskActionConfirm.task.price}！`}
+             </p>
+             <div className="flex gap-3">
+               <button onClick={() => setTaskActionConfirm(null)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
+               <button onClick={executeTaskAction} className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg transition-colors ${
+                  taskActionConfirm.action === 'release' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30' : 'bg-[#28C8C8] hover:bg-[#20a0a0] shadow-[#28C8C8]/30'
+               }`}>
+                 確定
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setShowShareModal(false)}>
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
+             <h3 className="font-bold text-xl mb-6 text-gray-800 text-center">邀請室友</h3>
+             <div className="space-y-3">
+               <button 
+                 onClick={async () => {
+                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
+                   const shareText = `歡迎加入 ${groupName} 一起分擔家事吧 ！\n${link}`;
+                   if (liff.isInClient() && liff.isApiAvailable('shareTargetPicker')) {
+                     await liff.shareTargetPicker([{ type: "text", text: shareText }]);
+                   } else {
+                     window.open(`https://line.me/R/msg/text/?${encodeURIComponent(shareText)}`, '_blank');
+                   }
+                   setShowShareModal(false);
+                 }} 
+                 className="w-full py-4 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl font-bold shadow-lg shadow-[#06C755]/30 transition-colors flex items-center justify-center gap-2"
+               >
+                 <Send size={18}/> 分享至 LINE
+               </button>
+               
+               <button 
+                 onClick={() => {
+                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
+                   navigator.clipboard.writeText(link);
+                   setShowShareModal(false);
+                   setAlertMsg("連結已複製");
+                 }} 
+                 className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+               >
+                 <Copy size={18}/> 複製連結
+               </button>
+             </div>
+             <button onClick={() => setShowShareModal(false)} className="w-full mt-4 py-3 text-gray-400 font-bold hover:text-gray-600 transition-colors">取消</button>
+          </div>
+        </div>
+      )}
+
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl">
@@ -922,46 +1006,6 @@ export default function RoomieTaskApp() {
                <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
                <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/30 transition-colors">重置</button>
              </div>
-          </div>
-        </div>
-      )}
-{showShareModal && (
-        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setShowShareModal(false)}>
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
-             <h3 className="font-bold text-xl mb-6 text-gray-800 text-center">邀請室友</h3>
-             <div className="space-y-3">
-               <button 
-                 onClick={async () => {
-                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
-                   const shareText = `歡迎加入 ${groupName} 一起分擔家事吧 ！\n${link}`;
-                   
-                   // 如果在 LINE 裡面，使用內部的好友選擇器
-                   if (liff.isInClient() && liff.isApiAvailable('shareTargetPicker')) {
-                     await liff.shareTargetPicker([{ type: "text", text: shareText }]);
-                   } else {
-                     // 如果在外部瀏覽器，直接喚醒 LINE App
-                     window.open(`https://line.me/R/msg/text/?${encodeURIComponent(shareText)}`, '_blank');
-                   }
-                   setShowShareModal(false);
-                 }} 
-                 className="w-full py-4 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl font-bold shadow-lg shadow-[#06C755]/30 transition-colors flex items-center justify-center gap-2"
-               >
-                 <Send size={18}/> 分享至 LINE
-               </button>
-               
-               <button 
-                 onClick={() => {
-                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
-                   navigator.clipboard.writeText(link); // 僅複製純網址
-                   setShowShareModal(false);
-                   setAlertMsg("連結已複製");
-                 }} 
-                 className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
-               >
-                 <Copy size={18}/> 複製連結
-               </button>
-             </div>
-             <button onClick={() => setShowShareModal(false)} className="w-full mt-4 py-3 text-gray-400 font-bold hover:text-gray-600 transition-colors">取消</button>
           </div>
         </div>
       )}
