@@ -695,9 +695,17 @@ export default function RoomieTaskApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 pb-24 overscroll-contain" ref={mainScrollRef}>
-        {view === 'roster' && (
+{view === 'roster' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
+              
+              {/* 新增的按鈕區塊 */}
+              <div className="flex justify-end mb-3 px-1">
+                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-[#28C8C8]/20 flex items-center gap-1.5 active:scale-95 transition-all">
+                  <Plus size={16}/> 新增家事
+                </button>
+              </div>
+
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
                 <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>近期待辦</button>
                 <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>任務列表</button>
