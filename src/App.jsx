@@ -99,7 +99,7 @@ export default function RoomieTaskApp() {
   const [isSaving, setIsSaving] = useState(false);
 
   // ==========================================
-  // 初始化邏輯
+  // 🚀 初始化：強制每次登入自動雲端同步
   // ==========================================
   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
@@ -130,7 +130,6 @@ export default function RoomieTaskApp() {
     const initLiff = async () => {
       try {
         await liff.init({ liffId: LIFF_ID });
-        
         if (!isMounted) return;
 
         if (!liff.isLoggedIn()) { 
@@ -149,28 +148,33 @@ export default function RoomieTaskApp() {
 
           const user = { id: profile.userId, name: profile.displayName, avatar: profile.pictureUrl };
           setCurrentUser(user);
-          setMyGroups(getSavedGroups());
 
+          // 🌟 核心修改：等待雲端同步完成後，才解除 Loading 狀態
           try {
             const snap = await get(ref(db, 'groups'));
+            const joinedGroups = [];
             if (snap.exists() && isMounted) {
               const allGroups = snap.val();
-              const joinedGroups = [];
               for (const [gId, groupData] of Object.entries(allGroups)) {
                 if (groupData && groupData.users && groupData.users[user.id]) {
                   joinedGroups.push({ id: gId, name: groupData.metadata?.name || '我的空間' });
                 }
               }
-              setMyGroups(joinedGroups);
-              localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
             }
+            // 無論有沒有找到，都更新畫面與快取
+            setMyGroups(joinedGroups);
+            localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
           } catch (dbError) {
-            console.error("同步群組失敗:", dbError);
+            console.error("強制同步群組失敗:", dbError);
+            setMyGroups(getSavedGroups()); // 失敗時才使用舊快取
           }
 
           const gId = new URLSearchParams(window.location.search).get('g');
-          if (gId) enterGroup(gId, user); 
-          else setLoading(false);
+          if (gId) {
+            enterGroup(gId, user); 
+          } else {
+            setLoading(false); // 同步且沒有群組ID時，才關閉 Loading 顯示首頁
+          }
           
         } catch (profileError) {
           console.error("LIFF getProfile 失敗:", profileError);
@@ -200,6 +204,9 @@ export default function RoomieTaskApp() {
     };
   }, []);
 
+  // ==========================================
+  // 原有邏輯
+  // ==========================================
   const handleNav = (targetView) => {
     setView(targetView);
     setIsUserMenuOpen(false);
@@ -341,13 +348,6 @@ export default function RoomieTaskApp() {
       }
     });
     if (hasUpdates) await update(ref(db), updates);
-  };
-
-  const clearFutureTasks = async (configId) => {
-    const tasksToRemove = currentCycleTasks.filter(t => t.configId === configId && t.status !== 'done');
-    const updates = {};
-    tasksToRemove.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
-    if (Object.keys(updates).length > 0) await update(ref(db), updates);
   };
 
   const registerMember = (gId, user) => {
@@ -623,21 +623,25 @@ export default function RoomieTaskApp() {
       <div className="flex-1">
         <h1 className="text-3xl font-bold mb-2">👋 嗨，{currentUser?.name}</h1>
         <p className="text-gray-500 mb-8">歡迎回到家事交易所</p>
-        <h3 className="font-bold text-gray-800 mb-4 text-base">已加入的空間</h3>
+        
+        <h3 className="font-bold text-gray-800 text-base mb-4">已加入的空間</h3>
+
         <div className="space-y-4">
           {myGroups.length === 0 ? (
-            <div className="text-center py-10 text-gray-300 border-2 border-dashed rounded-2xl text-sm">還沒加入任何空間</div>
+            <div className="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-2xl text-sm space-y-4 bg-gray-50/50">
+              <p>您目前還沒有加入任何空間喔</p>
+            </div>
           ) : (
             myGroups.map(g => (
-              <div key={g.id} onClick={() => { isQuittingRef.current = false; enterGroup(g.id, currentUser); }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center active:scale-95 transition-all cursor-pointer">
-                <span className="font-bold text-gray-700 text-base">{g.name}</span>
-                <div className="text-[#28C8C8] font-bold text-base">進入</div>
+              <div key={g.id} onClick={() => { isQuittingRef.current = false; enterGroup(g.id, currentUser); }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center active:scale-95 transition-all cursor-pointer hover:border-[#28C8C8]/50 group">
+                <span className="font-bold text-gray-700 text-base group-hover:text-[#28C8C8] transition-colors">{g.name}</span>
+                <div className="text-[#28C8C8] font-bold text-base bg-[#28C8C8]/10 px-3 py-1 rounded-lg">進入</div>
               </div>
             ))
           )}
         </div>
       </div>
-      <button onClick={() => { setNewGroupName(`${currentUser?.name || '我'} 的家`); setShowCreateGroupModal(true); }} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all text-lg">建立新空間</button>
+      <button onClick={() => { setNewGroupName(`${currentUser?.name || '我'} 的家`); setShowCreateGroupModal(true); }} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all text-lg mt-6">建立新空間</button>
       
       {showCreateGroupModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -662,14 +666,14 @@ export default function RoomieTaskApp() {
           <Edit2 size={16} className="text-gray-400 cursor-pointer hover:text-[#28C8C8]" onClick={() => { setNewNameInput(groupName); setShowRenameModal(true); }}/>
         </div>
         <div className="relative">
-          <div onClick={(e) => { e.stopPropagation(); setIsUserMenuOpen(!isUserMenuOpen); }} className="flex items-center gap-2 bg-gray-100 p-1 pr-3 rounded-full cursor-pointer">
-            <img src={currentUser?.avatar} className="w-8 h-8 rounded-full border border-white" />
+          <div onClick={(e) => { e.stopPropagation(); setIsUserMenuOpen(!isUserMenuOpen); }} className="flex items-center gap-2 bg-gray-100 p-1 pr-3 rounded-full cursor-pointer hover:bg-gray-200 transition-colors">
+            <img src={currentUser?.avatar} className="w-8 h-8 rounded-full border border-white object-cover" />
             <span className="text-sm font-bold text-gray-700">{currentUser?.name}</span>
           </div>
           {isUserMenuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setIsUserMenuOpen(false)}></div>
-              <div className="absolute right-0 top-12 w-48 bg-white border rounded-xl shadow-xl z-50 overflow-hidden">
+              <div className="absolute right-0 top-12 w-48 bg-white border rounded-xl shadow-xl z-50 overflow-hidden animate-in slide-in-from-top-2">
                  <button onClick={handleGoHome} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-600"><Home size={18}/> 我的空間</button>
                  <button onClick={() => { setIsUserMenuOpen(false); setShowResetModal(true); }} className="w-full text-left p-4 text-base border-b flex items-center gap-3 hover:bg-gray-50 font-bold text-gray-700"><RotateCcw size={18}/> 重置群組</button>
                  <button onClick={() => { setIsUserMenuOpen(false); setShowQuitModal(true); }} className="w-full text-left p-4 text-base text-red-500 flex items-center gap-3 hover:bg-gray-50 font-bold"><LogOut size={18}/> 退出群組</button>
@@ -681,155 +685,182 @@ export default function RoomieTaskApp() {
 
       <main className="flex-1 overflow-y-auto p-4 pb-24 overscroll-contain" ref={mainScrollRef}>
         {view === 'roster' && (
-          <div className="space-y-6">
-            <div className="sticky top-0 z-20 bg-white pt-2 pb-4 px-1">
-              <div className="flex bg-gray-100 p-1 rounded-2xl">
-                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-400'}`}>近期待辦</button>
-                <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-white text-[#28C8C8] shadow-sm' : 'text-gray-400'}`}>任務列表</button>
+          <div className="space-y-6 animate-in fade-in">
+            <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
+              <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
+                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>近期待辦</button>
+                <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>任務列表</button>
               </div>
             </div>
 
             {rosterTab === 'mine' && (
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
-                  <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed">目前沒有任務 🎉</div> :
+                  <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed border-gray-200">目前沒有任務 🎉</div> :
                   myTasks.slice(0, myTasksLimit).map(task => (
-                    <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between hover:border-[#28C8C8]/30 transition-colors">
                       <div className="flex items-center gap-4">
-                        <span className="text-3xl">{task.icon}</span>
-                        <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-gray-400 font-bold">{task.date}</div></div>
+                        <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center text-3xl">{task.icon}</div>
+                        <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div></div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => releaseTask(task)} className="bg-red-50 text-red-500 px-4 py-2 rounded-xl text-sm font-bold">沒空</button>
-                        <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-xl text-sm font-bold ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#28C8C8]'}`}>完成</button>
+                        <button onClick={() => releaseTask(task)} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors">沒空</button>
+                        <button onClick={() => completeTask(task)} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
                       </div>
                     </div>
                   ))
                 }
-                {myTasks.length > myTasksLimit && <button onClick={() => setMyTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 rounded-xl">查看更多</button>}
+                {myTasks.length > myTasksLimit && <button onClick={() => setMyTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-white border border-[#28C8C8]/20 rounded-xl hover:bg-[#28C8C8]/5 transition-colors">查看更多</button>}
               </div>
             )}
 
             {rosterTab === 'all' && (
               <div className="space-y-3">
-                {allTasks.length === 0 ? <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed">目前沒有任務 🎉</div> :
+                {allTasks.length === 0 ? <div className="p-10 text-center text-gray-400 text-base bg-white rounded-2xl border border-dashed border-gray-200">目前沒有任務 🎉</div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
                     const isOpen = task.status === 'open';
                     const isDone = task.status === 'done';
                     const holder = users.find(u => u.id === task.currentHolderId);
                     return (
-                      <div key={task.id} className={`p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between ${isOpen ? 'bg-red-50' : 'bg-white'}`}>
+                      <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isOpen ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100'}`}>
                         <div className="flex items-center gap-4">
-                          <span className={`text-3xl ${isDone ? 'opacity-30' : ''}`}>{task.icon}</span>
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl ${isDone ? 'opacity-30 bg-gray-50' : isOpen ? 'bg-white' : 'bg-gray-50'}`}>{task.icon}</div>
                           <div>
                             <div className="font-bold text-base text-gray-800">{task.name}</div>
-                            <div className="text-sm text-gray-400 font-bold">{task.date} · {holder ? holder.name : '未分配'}</div>
+                            <div className="text-sm text-gray-500 font-bold mt-0.5 flex items-center gap-1.5">
+                              <span className="font-mono bg-gray-100 px-1.5 rounded">{task.date}</span>
+                              <span>·</span>
+                              <div className="flex items-center gap-1">
+                                {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
+                                {holder ? holder.name : '未分配'}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200">接單</button>}
+                        {isOpen && <button onClick={() => claimTask(task)} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all">接單</button>}
                         {isDone && <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>}
                       </div>
                     )
                   })
                 }
-                {allTasks.length > allTasksLimit && <button onClick={() => setAllTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-gray-50 rounded-xl">查看更多</button>}
+                {allTasks.length > allTasksLimit && <button onClick={() => setAllTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-white border border-[#28C8C8]/20 rounded-xl hover:bg-[#28C8C8]/5 transition-colors">查看更多</button>}
               </div>
             )}
           </div>
         )}
 
         {view === 'wallet' && (
-          <div className="space-y-6">
-            <div className="bg-[#28C8C8] p-8 rounded-3xl text-white shadow-lg shadow-[#28C8C8]/30">
-              <div className="text-sm opacity-80 mb-1">我的收支</div>
-              <div className="text-4xl font-bold font-mono tracking-tight">${users.find(u => u.id === currentUser?.id)?.balance || 0}</div>
+          <div className="space-y-6 animate-in fade-in">
+            <div className="bg-gradient-to-br from-[#28C8C8] to-[#1facac] p-8 rounded-3xl text-white shadow-lg shadow-[#28C8C8]/30 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
+              <div className="text-sm font-bold opacity-90 mb-2">我的總餘額</div>
+              <div className="text-5xl font-bold font-mono tracking-tight flex items-baseline gap-1">
+                <span className="text-2xl">$</span>
+                {users.find(u => u.id === currentUser?.id)?.balance || 0}
+              </div>
             </div>
             
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <h3 className="font-bold text-gray-800 mb-3 text-lg">還款建議</h3>
-              <div className="space-y-2">
-                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-2 text-center">目前帳務平衡，無需結算</p> : 
+            <div className="bg-white rounded-2xl border shadow-sm p-5">
+              <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><AlertCircle size={18} className="text-[#28C8C8]"/> 還款建議</h3>
+              <div className="space-y-3">
+                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">目前帳務完美平衡 ✨</p> : 
                    calculateSettlements().map((tx, idx) => (
-                     <div key={idx} className="bg-gray-50 p-3 rounded-xl flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
-                          <span>{tx.fromName}</span>
-                          <ArrowRight size={14} className="text-gray-400"/>
-                          <span>{tx.toName}</span>
+                     <div key={idx} className="bg-white border border-gray-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                        <div className="flex flex-col gap-1 text-sm font-bold text-gray-700">
+                          <div className="flex items-center gap-2">
+                            <span>{tx.fromName}</span>
+                            <ArrowRight size={14} className="text-gray-400"/>
+                            <span>{tx.toName}</span>
+                          </div>
+                          <div className="text-red-500 font-mono text-base">需支付 ${tx.amount}</div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold">${tx.amount}</span>
-                          <button onClick={() => settleDebt(tx)} className="bg-[#28C8C8] text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">結清</button>
-                        </div>
+                        <button onClick={() => settleDebt(tx)} className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors">點擊結清</button>
                      </div>
                    ))
                  }
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border divide-y">
-               {users.map(u => (
-                 <div key={u.id} className="p-5 flex justify-between items-center">
-                   <div className="flex items-center gap-4"><img src={u.avatar} className="w-10 h-10 rounded-full"/><span className="font-bold text-base text-gray-800">{u.name}</span></div>
-                   <span className={`font-bold font-mono text-xl ${u.balance >= 0 ? 'text-[#28C8C8]' : 'text-red-500'}`}>{u.balance >= 0 ? '+' : ''}{u.balance}</span>
-                 </div>
-               ))}
+            <div>
+               <h3 className="font-bold text-gray-800 mb-3 px-1 text-lg">成員餘額</h3>
+               <div className="bg-white rounded-2xl border shadow-sm divide-y">
+                 {users.map(u => (
+                   <div key={u.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                     <div className="flex items-center gap-4">
+                       <img src={u.avatar} className="w-12 h-12 rounded-full border-2 border-white shadow-sm object-cover"/>
+                       <span className="font-bold text-base text-gray-800">{u.name}</span>
+                     </div>
+                     <span className={`font-bold font-mono text-2xl ${u.balance >= 0 ? 'text-[#28C8C8]' : 'text-red-500'}`}>{u.balance > 0 ? '+' : ''}{u.balance}</span>
+                   </div>
+                 ))}
+               </div>
             </div>
           </div>
         )}
 
         {view === 'history' && (
-          <div className="space-y-4 pl-4 border-l-2 border-gray-100 ml-2">
-            {logs.length === 0 ? <div className="text-center text-gray-400 py-10">暫無動態</div> : 
-              logs.map(log => (
-                <div key={log.id} className="relative pb-6">
-                  <div className={`absolute -left-[23px] top-1 w-3 h-3 rounded-full border-2 border-white ${log.type === 'success' ? 'bg-green-500' : log.type === 'warning' ? 'bg-red-500' : 'bg-[#28C8C8]'}`}></div>
-                  <div className="text-base text-gray-800 font-bold">{log.msg}</div>
-                  <div className="text-xs text-gray-400 font-bold mt-1">{log.time}</div>
-                </div>
-              ))
-            }
+          <div className="animate-in fade-in">
+            <h3 className="font-bold text-gray-800 mb-6 text-lg">系統動態</h3>
+            <div className="space-y-0 pl-4 border-l-2 border-gray-100 ml-2">
+              {logs.length === 0 ? <div className="text-center text-gray-400 py-10">暫無動態</div> : 
+                logs.map((log, i) => (
+                  <div key={log.id} className="relative pb-8 last:pb-2">
+                    <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-[3px] border-white shadow-sm ${log.type === 'success' ? 'bg-green-500' : log.type === 'warning' ? 'bg-red-500' : 'bg-[#28C8C8]'}`}></div>
+                    <div className="text-base text-gray-800 font-bold leading-tight bg-white p-3 rounded-xl shadow-sm border border-gray-50 -mt-2 ml-4 relative">
+                      {/* Triangle pointer */}
+                      <div className="absolute w-3 h-3 bg-white border-t border-l border-gray-50 transform -rotate-45 -left-1.5 top-3"></div>
+                      <span className="relative z-10">{log.msg}</span>
+                    </div>
+                    <div className="text-xs text-gray-400 font-bold mt-1.5 ml-5">{log.time}</div>
+                  </div>
+                ))
+              }
+            </div>
           </div>
         )}
 
         {view === 'settings' && (
-          <div className="space-y-6">
+          <div className="space-y-6 animate-in fade-in">
             <div className="bg-white p-5 rounded-2xl border shadow-sm">
-               <div className="flex justify-between items-center mb-4 border-b pb-2">
-                 <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
+               <div className="flex justify-between items-center mb-5">
+                 <div>
+                   <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
+                   <p className="text-xs text-gray-400 mt-1 font-bold">目前共有 {users.length} 位成員</p>
+                 </div>
                  <button onClick={async () => {
                    const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
                    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
                    if (!isLocal && liff.isApiAvailable('shareTargetPicker')) await liff.shareTargetPicker([{ type: "text", text: `🏠 加入我的家事空間：\n${link}` }]);
                    else { navigator.clipboard.writeText(link); setAlertMsg("連結已複製"); }
-                 }} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md flex items-center gap-1"><Plus size={16}/> 邀請室友</button>
+                 }} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請</button>
                </div>
-               <div className="space-y-3">
+               <div className="grid grid-cols-4 gap-4">
                  {users.map(u => (
-                   <div key={u.id} className="flex items-center gap-3">
-                     <img src={u.avatar} className="w-10 h-10 rounded-full border border-gray-100"/>
-                     <span className="font-bold text-base text-gray-700">{u.name}</span>
+                   <div key={u.id} className="flex flex-col items-center gap-2">
+                     <img src={u.avatar} className="w-14 h-14 rounded-full border border-gray-100 object-cover shadow-sm"/>
+                     <span className="font-bold text-xs text-gray-700 truncate w-full text-center">{u.name}</span>
                    </div>
                  ))}
                </div>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border shadow-sm space-y-4">
-              <div className="flex justify-between items-center border-b pb-2">
+              <div className="flex justify-between items-center pb-2 border-b border-gray-50">
                 <h3 className="font-bold text-gray-800 text-lg">家事規則</h3>
-                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8] text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md flex items-center gap-1"><Plus size={16}/> 新增家事</button>
+                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增</button>
               </div>
               <div className="space-y-3">
                 {taskConfigs.map(c => (
-                  <div key={c.id} className="flex justify-between items-center p-4 bg-white border rounded-xl shadow-sm">
+                  <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 border border-transparent hover:border-gray-200 rounded-xl transition-colors">
                     <div className="flex items-center gap-4">
-                      <span className="text-3xl">{c.icon}</span>
+                      <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl">{c.icon}</div>
                       <div>
                         <div className="font-bold text-base text-gray-800">{c.name}</div>
-                        <div className="text-sm text-gray-400 font-bold">${c.price} / {c.freq}</div>
+                        <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-[#28C8C8]">${c.price}</span> / {c.freq}</div>
                       </div>
                     </div>
-                    <div className="flex gap-4">
-                      <Edit2 size={20} className="text-[#28C8C8] cursor-pointer" onClick={() => { 
+                    <div className="flex gap-2">
+                      <button onClick={() => { 
                          setEditingConfigId(c.id); 
                          const freqNum = c.freq && typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '7') : 7;
                          setConfigForm({ 
@@ -840,8 +871,8 @@ export default function RoomieTaskApp() {
                            nextAssigneeId: c.nextAssigneeId
                          }); 
                          setIsEditingConfig(true); 
-                      }}/>
-                      <Trash2 size={20} className="text-red-500 cursor-pointer" onClick={() => setDeleteTarget({ type: 'config', id: c.id })}/>
+                      }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
+                      <button onClick={() => setDeleteTarget({ type: 'config', id: c.id })} className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-colors"><Trash2 size={18}/></button>
                     </div>
                   </div>
                 ))}
@@ -853,131 +884,134 @@ export default function RoomieTaskApp() {
 
       <nav className="flex-none bg-white border-t flex justify-around pb-8 pt-3 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] z-30">
         {[{id:'roster', icon:CheckCircle2, label:'值日表'}, {id:'wallet', icon:Wallet, label:'帳本'}, {id:'history', icon:Loader2, label:'動態'}, {id:'settings', icon:Settings, label:'設定'}].map(n => (
-          <button key={n.id} onClick={() => handleNav(n.id)} className={`flex flex-col items-center w-full py-2 transition-all ${view === n.id ? 'text-[#28C8C8] scale-110' : 'text-gray-300'}`}><n.icon size={26}/><span className="text-xs font-bold mt-1.5">{n.label}</span></button>
+          <button key={n.id} onClick={() => handleNav(n.id)} className={`flex flex-col items-center w-full py-2 transition-all ${view === n.id ? 'text-[#28C8C8] scale-110' : 'text-gray-400 hover:text-gray-600'}`}><n.icon size={26}/><span className="text-xs font-bold mt-1.5">{n.label}</span></button>
         ))}
       </nav>
 
       {/* --- Modals --- */}
       {showRenameModal && (
-        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl">
              <h3 className="font-bold text-xl mb-4 text-gray-800">修改空間名稱</h3>
-             <input type="text" id="rename-input" name="rename-input" value={newNameInput} onChange={e => setNewNameInput(e.target.value)} className="w-full p-4 bg-gray-50 rounded-xl mb-6 text-center font-bold text-lg"/>
+             <input type="text" id="rename-input" name="rename-input" value={newNameInput} onChange={e => setNewNameInput(e.target.value)} className="w-full p-4 bg-gray-50 rounded-xl mb-6 text-center font-bold text-lg border border-gray-200 focus:border-[#28C8C8] outline-none transition-colors"/>
              <div className="flex gap-3">
-               <button onClick={() => setShowRenameModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-               <button onClick={handleRenameGroup} className="flex-1 py-3 bg-[#28C8C8] text-white rounded-xl font-bold">確定</button>
+               <button onClick={() => setShowRenameModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
+               <button onClick={handleRenameGroup} className="flex-1 py-3 bg-[#28C8C8] hover:bg-[#20a0a0] text-white rounded-xl font-bold shadow-lg shadow-[#28C8C8]/30 transition-colors">確定</button>
              </div>
           </div>
         </div>
       )}
 
       {showQuitModal && (
-        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
-             <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl">
+             <div className="mb-4 text-red-500 flex justify-center bg-red-50 w-20 h-20 mx-auto rounded-full items-center"><AlertCircle size={40}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-800">確定退出群組？</h3>
-             <p className="text-gray-500 mb-6 text-base">您將會從成員名單中移除，但歷史紀錄會保留。</p>
+             <p className="text-gray-500 mb-6 text-sm font-bold">您將會從成員名單中移除，但歷史紀錄會保留。</p>
              <div className="flex gap-3">
-               <button onClick={() => setShowQuitModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-               <button onClick={handleQuitGroupConfirm} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">退出</button>
+               <button onClick={() => setShowQuitModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
+               <button onClick={handleQuitGroupConfirm} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/30 transition-colors">退出</button>
              </div>
           </div>
         </div>
       )}
 
       {showResetModal && (
-        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
-             <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl">
+             <div className="mb-4 text-red-500 flex justify-center bg-red-50 w-20 h-20 mx-auto rounded-full items-center"><AlertCircle size={40}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-900">確定重置群組？</h3>
-             <p className="text-gray-600 mb-6 text-base">這將清空所有任務、日誌與家事規則，並將所有人餘額歸零。</p>
+             <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed">這將清空所有任務、日誌與家事規則，並將所有人餘額歸零。</p>
              <div className="flex gap-3">
-               <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
-               <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">重置</button>
+               <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
+               <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/30 transition-colors">重置</button>
              </div>
           </div>
         </div>
       )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95">
-             <div className="mb-4 text-red-500 flex justify-center"><AlertCircle size={48}/></div>
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl">
+             <div className="mb-4 text-red-500 flex justify-center bg-red-50 w-20 h-20 mx-auto rounded-full items-center"><AlertCircle size={40}/></div>
              <h3 className="font-bold text-xl mb-2 text-gray-800">確定刪除？</h3>
-             <p className="text-gray-500 mb-6 text-base">此動作將刪除規則及未來的待辦。</p>
+             <p className="text-gray-500 mb-6 text-sm font-bold">此動作將刪除該規則及其未來的待辦任務。</p>
              <div className="flex gap-3">
-               <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-               <button onClick={deleteConfigConfirm} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold">刪除</button>
+               <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
+               <button onClick={deleteConfigConfirm} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/30 transition-colors">刪除</button>
              </div>
           </div>
         </div>
       )}
 
       {isEditingConfig && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5">
-            <div className="flex justify-between items-center border-b pb-4">
-              <h2 className="font-bold text-xl">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
-              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+        <div className="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end sm:justify-center backdrop-blur-sm">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-in slide-in-from-bottom-5 sm:max-w-sm sm:mx-auto sm:w-full shadow-2xl">
+            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
+              <h2 className="font-bold text-xl text-gray-800">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
+              <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-full transition-colors"><X size={20}/></button>
             </div>
             
-            <div className="flex gap-4 relative">
-              <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-20 p-4 bg-gray-50 rounded-2xl text-center text-3xl cursor-pointer hover:bg-gray-100 h-14 flex items-center justify-center border border-gray-100">{configForm.icon}</div>
-              <input type="text" id="task-name" name="taskName" placeholder="名稱 (如：倒垃圾)" value={configForm.name} onChange={e => setConfigForm({...configForm, name:e.target.value})} className="flex-1 p-4 bg-gray-50 rounded-2xl text-lg font-bold outline-none focus:ring-2 focus:ring-[#28C8C8] h-14"/>
+            <div className="flex gap-3 relative">
+              <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-16 h-14 bg-gray-50 rounded-2xl text-center text-3xl cursor-pointer hover:bg-gray-100 flex items-center justify-center border border-gray-200 transition-colors shrink-0">{configForm.icon}</div>
+              <input type="text" id="task-name" name="taskName" placeholder="名稱 (如：倒垃圾)" value={configForm.name} onChange={e => setConfigForm({...configForm, name:e.target.value})} className="flex-1 px-4 bg-gray-50 rounded-2xl text-lg font-bold border border-gray-200 outline-none focus:border-[#28C8C8] h-14 transition-colors placeholder:text-gray-400"/>
               
               {showEmojiPicker && (
-                <div className="absolute top-16 left-0 bg-white shadow-2xl rounded-2xl border p-4 grid grid-cols-6 gap-2 w-full z-50 h-64 overflow-y-auto">
-                  {EMOJI_LIST.map(e => <button key={e} onClick={() => { setConfigForm({...configForm, icon:e}); setShowEmojiPicker(false); }} className="text-2xl hover:bg-gray-100 p-2 rounded-lg">{e}</button>)}
-                </div>
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowEmojiPicker(false)}></div>
+                  <div className="absolute top-16 left-0 bg-white shadow-2xl rounded-2xl border border-gray-100 p-4 grid grid-cols-6 gap-2 w-full z-50 h-64 overflow-y-auto animate-in fade-in zoom-in-95">
+                    {EMOJI_LIST.map(e => <button key={e} onClick={() => { setConfigForm({...configForm, icon:e}); setShowEmojiPicker(false); }} className="text-2xl hover:bg-gray-50 p-2 rounded-xl transition-colors">{e}</button>)}
+                  </div>
+                </>
               )}
             </div>
             {formError && <p className="text-red-500 text-sm font-bold ml-1">{formError}</p>}
 
             <div className="relative">
-              <input type="number" id="task-price" name="taskPrice" value={configForm.price === 0 ? '' : configForm.price} onChange={e => setConfigForm({...configForm, price: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-10 bg-gray-50 rounded-2xl font-mono text-xl font-bold outline-none focus:ring-2 focus:ring-[#28C8C8]"/>
+              <input type="number" id="task-price" name="taskPrice" value={configForm.price === 0 ? '' : configForm.price} onChange={e => setConfigForm({...configForm, price: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-10 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] transition-colors"/>
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">$</span>
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">元</span>
             </div>
 
             <div className="relative">
-              <input type="number" id="task-freq" name="taskFreq" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-14 bg-gray-50 rounded-2xl font-mono text-xl font-bold outline-none focus:ring-2 focus:ring-[#28C8C8] text-left"/>
+              <input type="number" id="task-freq" name="taskFreq" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-14 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] text-left transition-colors"/>
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">每</span>
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">日一次</span>
             </div>
 
-            <div className="space-y-2">
-              <span className="text-sm font-bold text-gray-400 ml-1">排班人員順序</span>
-              <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-4 px-2 pt-2">
+            <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+              <span className="text-sm font-bold text-gray-700 block text-center">設定排班順序</span>
+              <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-2 justify-center">
                 {users.map(u => {
                   if (!u || !u.id) return null; 
                   const idx = (configForm.assigneeOrder || []).indexOf(u.id);
                   const isSelected = idx !== -1;
                   return (
-                    <div key={u.id} onClick={() => toggleUserInOrder(u.id)} className={`relative flex-none w-14 h-14 rounded-full border-2 cursor-pointer transition-all ${isSelected ? 'border-[#28C8C8] ring-2 ring-[#28C8C8]/30' : 'border-gray-200 grayscale opacity-60'}`}>
-                      <img src={u.avatar} className="w-full h-full rounded-full"/>
-                      {isSelected && <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#28C8C8] text-white text-xs font-bold flex items-center justify-center rounded-full shadow-sm z-10">{idx + 1}</div>}
+                    <div key={u.id} onClick={() => toggleUserInOrder(u.id)} className={`relative flex-none w-14 h-14 rounded-full border-[3px] cursor-pointer transition-all ${isSelected ? 'border-[#28C8C8] ring-4 ring-[#28C8C8]/20 scale-105' : 'border-gray-200 grayscale opacity-50 hover:opacity-80'}`}>
+                      <img src={u.avatar} className="w-full h-full rounded-full object-cover"/>
+                      {isSelected && <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#28C8C8] text-white text-xs font-bold flex items-center justify-center rounded-full shadow-md z-10 border-2 border-white">{idx + 1}</div>}
                     </div>
                   )
                 })}
               </div>
             </div>
 
-            <div className="space-y-1">
-                <label htmlFor="start-date" className="text-sm font-bold text-gray-400 ml-1">何時開始</label>
-                <input type="date" id="start-date" name="startDate" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-14 px-3 bg-gray-50 rounded-2xl font-bold outline-none text-lg"/>
+            <div className="space-y-2">
+                <label htmlFor="start-date" className="text-sm font-bold text-gray-600 ml-1">排班起始日</label>
+                <input type="date" id="start-date" name="startDate" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-14 px-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold outline-none focus:border-[#28C8C8] text-lg text-gray-700 transition-colors"/>
             </div>
 
-            <button onClick={saveConfig} disabled={isSaving} className="w-full py-4 bg-[#28C8C8] text-white rounded-2xl font-bold text-xl shadow-xl shadow-[#28C8C8]/20 active:scale-95 transition-transform disabled:opacity-50">{isSaving ? '儲存中...' : '儲存家事'}</button>
+            <button onClick={saveConfig} disabled={isSaving} className="w-full py-4 bg-[#28C8C8] hover:bg-[#20a0a0] text-white rounded-2xl font-bold text-xl shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2">{isSaving ? '儲存中...' : '儲存規則'}</button>
           </div>
         </div>
       )}
 
       {alertMsg && (
-        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-6" onClick={() => setAlertMsg(null)}>
-          <div className="bg-white w-full max-w-xs rounded-3xl p-6 text-center animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-            <div className="mb-4 text-[#28C8C8] flex justify-center"><CheckCircle2 size={40}/></div>
+        <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setAlertMsg(null)}>
+          <div className="bg-white w-full max-w-xs rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-4 text-[#28C8C8] flex justify-center"><CheckCircle2 size={48}/></div>
             <h3 className="font-bold text-gray-800 mb-6 text-lg">{alertMsg}</h3>
-            <button onClick={() => setAlertMsg(null)} className="w-full py-3 bg-gray-100 rounded-xl font-bold text-gray-600">好</button>
+            <button onClick={() => setAlertMsg(null)} className="w-full py-3.5 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-gray-700 transition-colors">知道了</button>
           </div>
         </div>
       )}
