@@ -5,7 +5,7 @@ import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, get, o
 import { 
   Trash2, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
   ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, Plus, 
-  ArrowRight, AlertCircle, RotateCcw
+  ArrowRight, AlertCircle, RotateCcw, Copy, Send
 } from 'lucide-react';
 
 // ==========================================
@@ -81,7 +81,8 @@ export default function RoomieTaskApp() {
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [showQuitModal, setShowQuitModal] = useState(false);
-  
+  const [showShareModal, setShowShareModal] = useState(false);
+
   const [newNameInput, setNewNameInput] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   
@@ -827,12 +828,7 @@ export default function RoomieTaskApp() {
                    <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
                    <p className="text-xs text-gray-400 mt-1 font-bold">目前共有 {users.length} 位成員</p>
                  </div>
-                 <button onClick={async () => {
-                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
-                   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-                   if (!isLocal && liff.isApiAvailable('shareTargetPicker')) await liff.shareTargetPicker([{ type: "text", text: `🏠 加入我的家事空間：\n${link}` }]);
-                   else { navigator.clipboard.writeText(link); setAlertMsg("連結已複製"); }
-                 }} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請</button>
+                 <button onClick={() => setShowShareModal(true)} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請</button>
                </div>
                <div className="grid grid-cols-4 gap-4">
                  {users.map(u => (
@@ -926,6 +922,46 @@ export default function RoomieTaskApp() {
                <button onClick={() => setShowResetModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
                <button onClick={handleResetGroup} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/30 transition-colors">重置</button>
              </div>
+          </div>
+        </div>
+      )}
+{showShareModal && (
+        <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setShowShareModal(false)}>
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
+             <h3 className="font-bold text-xl mb-6 text-gray-800 text-center">邀請室友</h3>
+             <div className="space-y-3">
+               <button 
+                 onClick={async () => {
+                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
+                   const shareText = `歡迎加入 ${groupName} 一起分擔家事吧 ！\n${link}`;
+                   
+                   // 如果在 LINE 裡面，使用內部的好友選擇器
+                   if (liff.isInClient() && liff.isApiAvailable('shareTargetPicker')) {
+                     await liff.shareTargetPicker([{ type: "text", text: shareText }]);
+                   } else {
+                     // 如果在外部瀏覽器，直接喚醒 LINE App
+                     window.open(`https://line.me/R/msg/text/?${encodeURIComponent(shareText)}`, '_blank');
+                   }
+                   setShowShareModal(false);
+                 }} 
+                 className="w-full py-4 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl font-bold shadow-lg shadow-[#06C755]/30 transition-colors flex items-center justify-center gap-2"
+               >
+                 <Send size={18}/> 分享至 LINE
+               </button>
+               
+               <button 
+                 onClick={() => {
+                   const link = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
+                   navigator.clipboard.writeText(link); // 僅複製純網址
+                   setShowShareModal(false);
+                   setAlertMsg("連結已複製");
+                 }} 
+                 className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+               >
+                 <Copy size={18}/> 複製連結
+               </button>
+             </div>
+             <button onClick={() => setShowShareModal(false)} className="w-full mt-4 py-3 text-gray-400 font-bold hover:text-gray-600 transition-colors">取消</button>
           </div>
         </div>
       )}
