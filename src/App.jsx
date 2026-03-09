@@ -97,6 +97,17 @@ export default function RoomieTaskApp() {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  // 🌟 新增：發送 LINE 訊息的共用函式
+  const sendLiffMessage = async (msg) => {
+    try {
+      if (liff.isInClient()) {
+        await liff.sendMessages([{ type: "text", text: msg }]);
+      }
+    } catch (e) {
+      console.error("發送 LINE 訊息失敗:", e);
+    }
+  };
+
   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
     if (savedVer !== APP_VERSION) {
@@ -527,6 +538,7 @@ export default function RoomieTaskApp() {
 
     await update(ref(db), updates);
     setAlertMsg("已成功退還扣款並標記完成！");
+    sendLiffMessage(`🏠 家事交易所通知\n我補按了「${task.name}」，已退還罰款並重新結算賞金！`); // 🌟 補按完成推播
   };
 
   const completeTask = async (task) => {
@@ -549,18 +561,21 @@ export default function RoomieTaskApp() {
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
     await update(ref(db), updates);
+    sendLiffMessage(`🏠 家事交易所通知\n我剛剛完成了「${task.name}」！`); // 🌟 完成推播
   };
   
   const releaseTask = async (task) => {
-    update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
+    await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
     const logId = Date.now();
-    set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
+    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
+    sendLiffMessage(`🏠 家事交易所通知\n我釋出了「${task.name}」，等待好心人接單！`); // 🌟 沒空推播
   };
 
   const claimTask = async (task) => {
-    update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
+    await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
-    set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
+    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
+    sendLiffMessage(`🏠 家事交易所通知\n我接手了「${task.name}」！`); // 🌟 接單推播
   };
 
   const toggleUserInOrder = (uid) => {
@@ -661,6 +676,7 @@ export default function RoomieTaskApp() {
 
       setIsEditingConfig(false);
       setAlertMsg("排班已更新！");
+      sendLiffMessage(`🏠 家事交易所通知\n我${actionMsg}！`); // 🌟 儲存規則推播
 
     } catch (error) {
       console.error(error);
@@ -720,6 +736,7 @@ export default function RoomieTaskApp() {
     updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${tx.fromName} 支付了 $${tx.amount} 給 ${tx.toName} (已結清)`, type: 'info', time: new Date().toLocaleTimeString() };
     await update(ref(db), updates);
     setAlertMsg("結帳成功！");
+    sendLiffMessage(`🏠 家事交易所通知\n我剛支付了 $${tx.amount} 給 ${tx.toName}，帳務已結清！`); // 🌟 結清推播
   };
 
   const todayStr = getTodayString();
@@ -735,7 +752,6 @@ export default function RoomieTaskApp() {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 
-  // 🌟 新增：計算紅點顯示條件
   const hasPendingTodayTasks = myTasks.some(t => t.date <= todayStr);
   const hasOpenTasks = allTasks.some(t => t.status === 'open');
 
