@@ -817,7 +817,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
+                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   myTasks.slice(0, myTasksLimit).map(task => {
@@ -854,7 +854,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {allTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
+                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
@@ -920,7 +920,7 @@ export default function RoomieTaskApp() {
                             isGuiltyUser ? (
                               <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">有做忘了按</button>
                             ) : (
-                              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-red-500"><X size={20}/></div>
+                              <button disabled className="bg-gray-200 text-gray-400 px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-not-allowed">有做忘了按</button>
                             )
                           ) : (
                             <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>
@@ -950,7 +950,7 @@ export default function RoomieTaskApp() {
             <div className="bg-white rounded-2xl border shadow-sm p-5">
               <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><AlertCircle size={18} className="text-[#28C8C8]"/> 還款建議</h3>
               <div className="space-y-3">
-                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">目前帳務完美平衡 ✨</p> : 
+                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">目前帳務完美平衡</p> : 
                    calculateSettlements().map((tx, idx) => (
                      <div key={idx} className="bg-white border border-gray-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
                         <div className="flex flex-col gap-1 text-sm font-bold text-gray-700">
@@ -1013,7 +1013,7 @@ export default function RoomieTaskApp() {
                    <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
                    <p className="text-xs text-gray-400 mt-1 font-bold">目前共有 {users.length} 位成員</p>
                  </div>
-                 <button onClick={() => setShowShareModal(true)} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請</button>
+                 <button onClick={() => setShowShareModal(true)} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請室友</button>
                </div>
                <div className="grid grid-cols-4 gap-4">
                  {users.map(u => (
@@ -1028,7 +1028,7 @@ export default function RoomieTaskApp() {
             <div className="bg-white p-5 rounded-2xl border shadow-sm space-y-4">
               <div className="flex justify-between items-center pb-2 border-b border-gray-50">
                 <h3 className="font-bold text-gray-800 text-lg">家事規則</h3>
-                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增</button>
+                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增家事</button>
               </div>
               <div className="space-y-3">
                 {taskConfigs.map(c => (
@@ -1097,8 +1097,8 @@ export default function RoomieTaskApp() {
                )}
                {taskActionConfirm.action === 'revert' && (
                  <>
-                   點擊後將把「{taskActionConfirm.task.name}」標記為已完成。<br />
-                   系統會自動退還之前的逾期罰款，並重新結算賞金！
+                   點擊後將把「{taskActionConfirm.task.name}」標記為已完成<br />
+                   系統會自動退還之前的逾期罰款，並重新結算賞金
                  </>
                )}
              </p>
