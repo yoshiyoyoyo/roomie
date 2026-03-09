@@ -8,12 +8,6 @@ import {
   ArrowRight, AlertCircle, RotateCcw, Copy, Send
 } from 'lucide-react';
 
-<<<<<<< HEAD
-=======
-// ==========================================
-// 系統設定
-// ==========================================
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
 const LIFF_ID = "2009134573-7SuphV8b"; 
 const APP_VERSION = "v1_db_reset_2024_new"; 
 
@@ -80,22 +74,12 @@ export default function RoomieTaskApp() {
   const [myTasksLimit, setMyTasksLimit] = useState(5);
   const [allTasksLimit, setAllTasksLimit] = useState(5);
 
-<<<<<<< HEAD
-=======
-  // Modals
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [showQuitModal, setShowQuitModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-<<<<<<< HEAD
   const [taskActionConfirm, setTaskActionConfirm] = useState(null); 
-=======
-  
-  // 🌟 新增：任務操作確認彈窗 State
-  const [taskActionConfirm, setTaskActionConfirm] = useState(null); // { action: 'complete'|'release'|'claim', task: object }
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
   
   const [newNameInput, setNewNameInput] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
@@ -113,12 +97,6 @@ export default function RoomieTaskApp() {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-<<<<<<< HEAD
-=======
-  // ==========================================
-  // 🚀 初始化
-  // ==========================================
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
     if (savedVer !== APP_VERSION) {
@@ -181,11 +159,7 @@ export default function RoomieTaskApp() {
             setMyGroups(joinedGroups);
             localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
           } catch (dbError) {
-<<<<<<< HEAD
             console.error("強制同步群組失敗", dbError);
-=======
-            console.error("強制同步群組失敗:", dbError);
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
             setMyGroups(getSavedGroups());
           }
 
@@ -197,21 +171,13 @@ export default function RoomieTaskApp() {
           }
           
         } catch (profileError) {
-<<<<<<< HEAD
           console.error("LIFF getProfile 失敗", profileError);
-=======
-          console.error("LIFF getProfile 失敗:", profileError);
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
           liff.logout();
           window.location.reload();
         }
 
       } catch (err) {
-<<<<<<< HEAD
         console.error("LIFF 初始化失敗", err);
-=======
-        console.error("LIFF 初始化失敗:", err);
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
         if (err.message && err.message.toLowerCase().includes("expired")) {
           liff.logout();
           window.location.reload();
@@ -268,13 +234,9 @@ export default function RoomieTaskApp() {
          window.history.pushState({}, '', window.location.pathname);
          return;
       }
-<<<<<<< HEAD
       const groupData = snapshot.val();
       await checkAndApplyPenalties(gId, groupData); 
       await checkAndGenerateTasks(gId, groupData); 
-=======
-      await checkAndGenerateTasks(gId, snapshot.val()); 
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
     } catch (e) { 
       console.error(e);
       setLoading(false);
@@ -340,7 +302,6 @@ export default function RoomieTaskApp() {
     });
   };
 
-<<<<<<< HEAD
   const checkAndApplyPenalties = async (gId, data) => {
     if (!data || !data.tasks || !data.users) return;
 
@@ -399,8 +360,6 @@ export default function RoomieTaskApp() {
     }
   };
 
-=======
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
   const checkAndGenerateTasks = async (gId, data) => {
     if (!data || !data.taskConfigs || !data.users) return;
     const updates = {};
@@ -509,18 +468,10 @@ export default function RoomieTaskApp() {
     enterGroup(gid, currentUser);
   };
 
-<<<<<<< HEAD
   const executeTaskAction = async () => {
     if (!taskActionConfirm) return;
     const { action, task } = taskActionConfirm;
     setTaskActionConfirm(null);
-=======
-  // 🌟 新增：統一執行任務操作的函式 (由確認彈窗觸發)
-  const executeTaskAction = async () => {
-    if (!taskActionConfirm) return;
-    const { action, task } = taskActionConfirm;
-    setTaskActionConfirm(null); // 先關閉彈窗
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
     
     if (action === 'complete') await completeTask(task);
     if (action === 'release') await releaseTask(task);
@@ -605,11 +556,7 @@ export default function RoomieTaskApp() {
       
       if (tasksSnap.exists()) {
           const allTasks = tasksSnap.val();
-<<<<<<< HEAD
           const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done' && t.status !== 'failed');
-=======
-          const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done');
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
           if (relatedTasks.length > 0) {
               relatedTasks.sort((a,b) => a.date.localeCompare(b.date));
               earliestPendingDate = relatedTasks[0].date;
@@ -726,11 +673,7 @@ export default function RoomieTaskApp() {
 
   const limitDate = addDays(getTodayString(), 45);
   const validConfigIds = taskConfigs.map(c => c.id);
-<<<<<<< HEAD
   const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' && t.status !== 'failed' || t.date >= getTodayString()));
-=======
-  const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' || t.date >= getTodayString()));
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
   const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
   const allTasks = visibleTasks;
 
@@ -802,11 +745,7 @@ export default function RoomieTaskApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 pb-24 overscroll-contain" ref={mainScrollRef}>
-<<<<<<< HEAD
         {view === 'roster' && (
-=======
-{view === 'roster' && (
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
@@ -819,11 +758,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-<<<<<<< HEAD
                     <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
-=======
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   myTasks.slice(0, myTasksLimit).map(task => (
@@ -850,11 +785,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {allTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-<<<<<<< HEAD
                     <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
-=======
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
@@ -903,11 +834,7 @@ export default function RoomieTaskApp() {
             <div className="bg-white rounded-2xl border shadow-sm p-5">
               <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><AlertCircle size={18} className="text-[#28C8C8]"/> 還款建議</h3>
               <div className="space-y-3">
-<<<<<<< HEAD
                  {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">目前帳務完美平衡 ✨</p> : 
-=======
-                 {calculateSettlements().length === 0 ? <p className="text-gray-400 text-sm py-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">誰也沒欠誰</p> : 
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
                    calculateSettlements().map((tx, idx) => (
                      <div key={idx} className="bg-white border border-gray-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
                         <div className="flex flex-col gap-1 text-sm font-bold text-gray-700">
@@ -970,11 +897,7 @@ export default function RoomieTaskApp() {
                    <h3 className="font-bold text-gray-800 text-lg">室友列表</h3>
                    <p className="text-xs text-gray-400 mt-1 font-bold">目前共有 {users.length} 位成員</p>
                  </div>
-<<<<<<< HEAD
                  <button onClick={() => setShowShareModal(true)} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請</button>
-=======
-                 <button onClick={() => setShowShareModal(true)} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 邀請室友</button>
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
                </div>
                <div className="grid grid-cols-4 gap-4">
                  {users.map(u => (
@@ -989,11 +912,7 @@ export default function RoomieTaskApp() {
             <div className="bg-white p-5 rounded-2xl border shadow-sm space-y-4">
               <div className="flex justify-between items-center pb-2 border-b border-gray-50">
                 <h3 className="font-bold text-gray-800 text-lg">家事規則</h3>
-<<<<<<< HEAD
                 <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增</button>
-=======
-                <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增家事</button>
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
               </div>
               <div className="space-y-3">
                 {taskConfigs.map(c => (
@@ -1034,12 +953,6 @@ export default function RoomieTaskApp() {
         ))}
       </nav>
 
-<<<<<<< HEAD
-=======
-      {/* --- Modals --- */}
-      
-      {/* 🌟 新增：任務操作確認彈窗 */}
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
       {taskActionConfirm && (
         <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-6 backdrop-blur-sm" onClick={() => setTaskActionConfirm(null)}>
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center animate-in zoom-in-95 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1051,7 +964,6 @@ export default function RoomieTaskApp() {
                {taskActionConfirm.action === 'release' && '確定沒空做嗎？'}
                {taskActionConfirm.action === 'claim' && '確定要接下此任務？'}
              </h3>
-<<<<<<< HEAD
              <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
                {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
                {taskActionConfirm.action === 'release' && (
@@ -1067,23 +979,6 @@ export default function RoomieTaskApp() {
                  </>
                )}
              </p>
-=======
-<p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
-  {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
-  {taskActionConfirm.action === 'release' && (
-    <>
-      釋出「{taskActionConfirm.task.name}」將扣除 ${taskActionConfirm.task.price} 轉為賞金<br />
-      並等待其他人接單
-    </>
-  )}
-  {taskActionConfirm.action === 'claim' && (
-    <>
-      接手「{taskActionConfirm.task.name}」完成後將獲得 ${taskActionConfirm.task.price}<br />
-      若未完成，將會扣除相應金額作為懲罰喔
-    </>
-  )}
-</p>
->>>>>>> 8d69951958d432374b242a716f61346b5c9baad8
              <div className="flex gap-3">
                <button onClick={() => setTaskActionConfirm(null)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold transition-colors">取消</button>
                <button onClick={executeTaskAction} className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg transition-colors ${
