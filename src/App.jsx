@@ -159,7 +159,7 @@ export default function RoomieTaskApp() {
             setMyGroups(joinedGroups);
             localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
           } catch (dbError) {
-            console.error("強制同步群組失敗:", dbError);
+            console.error("強制同步群組失敗", dbError);
             setMyGroups(getSavedGroups());
           }
 
@@ -171,13 +171,13 @@ export default function RoomieTaskApp() {
           }
           
         } catch (profileError) {
-          console.error("LIFF getProfile 失敗:", profileError);
+          console.error("LIFF getProfile 失敗", profileError);
           liff.logout();
           window.location.reload();
         }
 
       } catch (err) {
-        console.error("LIFF 初始化失敗:", err);
+        console.error("LIFF 初始化失敗", err);
         if (err.message && err.message.toLowerCase().includes("expired")) {
           liff.logout();
           window.location.reload();
@@ -341,9 +341,13 @@ export default function RoomieTaskApp() {
 
            const guiltyUserName = data.users[guiltyUserId]?.name || '未知成員';
            const logId = new Date().getTime() + Math.floor(Math.random() * 1000);
+           
+           const dateObj = new Date(task.date);
+           const formattedDate = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
+
            updates[`groups/${gId}/logs/${logId}`] = {
              id: logId,
-             msg: `${guiltyUserName} 逾期未完成「${task.name}」，已扣除 $${totalPenalty} 分發給其他人`,
+             msg: `${guiltyUserName} 逾期未完成 ${formattedDate}「${task.name}」，已扣除 $${totalPenalty} 分發給其他人`,
              type: 'warning',
              time: new Date().toLocaleTimeString()
            };
@@ -476,10 +480,9 @@ export default function RoomieTaskApp() {
     if (action === 'complete') await completeTask(task);
     if (action === 'release') await releaseTask(task);
     if (action === 'claim') await claimTask(task);
-    if (action === 'revert') await revertTaskPenalty(task); // 🌟 觸發返還機制
+    if (action === 'revert') await revertTaskPenalty(task);
   };
 
-  // 🌟 新增：退還罰款並標記完成
   const revertTaskPenalty = async (task) => {
     const userCount = users.length;
     if (userCount <= 1) return;
@@ -497,7 +500,6 @@ export default function RoomieTaskApp() {
     const tempBalances = {};
     users.forEach(u => tempBalances[u.id] = u.balance || 0);
 
-    // 1. 返還懲罰
     if (guiltyUserId && tempBalances[guiltyUserId] !== undefined) {
         tempBalances[guiltyUserId] += totalPenalty;
         users.forEach(u => {
@@ -507,13 +509,11 @@ export default function RoomieTaskApp() {
         });
     }
 
-    // 2. 正常發放完成賞金（如果是幫別人做的）
     if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
         tempBalances[task.originalHolderId] -= price;
         tempBalances[guiltyUserId] += price;
     }
 
-    // 3. 寫入資料庫
     Object.keys(tempBalances).forEach(uid => {
         updates[`groups/${groupId}/users/${uid}/balance`] = tempBalances[uid];
     });
@@ -722,15 +722,16 @@ export default function RoomieTaskApp() {
     setAlertMsg("結帳成功！");
   };
 
-  const limitDate = addDays(getTodayString(), 45);
+  const todayStr = getTodayString();
+  const limitDate = addDays(todayStr, 45);
   const validConfigIds = taskConfigs.map(c => c.id);
-  const visibleTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && (t.date <= limitDate) && (t.status !== 'done' && t.status !== 'failed' || t.date >= getTodayString()));
-  const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
-  const allTasks = visibleTasks;
 
-  // 🌟 新增：過濾並排序歷史任務 (近30筆)
+  const myTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.currentHolderId === currentUser?.id && t.status === 'pending');
+  
+  const allTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.date >= todayStr && t.date <= limitDate && (t.status === 'pending' || t.status === 'open'));
+
   const historyTasks = currentCycleTasks
-    .filter(t => t.status === 'done' || t.status === 'failed')
+    .filter(t => validConfigIds.includes(t.configId) && (t.status === 'done' || t.status === 'failed'))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 
@@ -805,7 +806,6 @@ export default function RoomieTaskApp() {
         {view === 'roster' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
-              {/* 🌟 修改：加入歷史紀錄分頁按鈕 */}
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
                 <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>待辦</button>
                 <button onClick={() => setRosterTab('all')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>列表</button>
@@ -820,21 +820,31 @@ export default function RoomieTaskApp() {
                     <p className="text-gray-400 text-base mb-4">目前沒有任務 🎉</p>
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
-                  myTasks.slice(0, myTasksLimit).map(task => (
-                    <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between hover:border-[#28C8C8]/30 transition-colors">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center text-3xl">{task.icon}</div>
-                        <div><div className="font-bold text-base text-gray-800">{task.name}</div><div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div></div>
+                  myTasks.slice(0, myTasksLimit).map(task => {
+                    const holder = users.find(u => u.id === task.currentHolderId);
+                    return (
+                      <div key={task.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between hover:border-[#28C8C8]/30 transition-colors">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center text-3xl shrink-0">{task.icon}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
+                              <span className="text-xs text-gray-500 font-bold truncate">{holder ? holder.name : '未分配'}</span>
+                            </div>
+                            <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                            <div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 shrink-0 ml-3">
+                          <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors whitespace-nowrap">沒空</button>
+                          <button onClick={() => {
+                            if (task.date > getTodayString()) setAlertMsg("只能完成今天以前的任務喔！");
+                            else setTaskActionConfirm({ action: 'complete', task });
+                          }} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 whitespace-nowrap ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors">沒空</button>
-                        <button onClick={() => {
-                          if (task.date > getTodayString()) setAlertMsg("只能完成今天以前的任務喔！");
-                          else setTaskActionConfirm({ action: 'complete', task });
-                        }} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
-                      </div>
-                    </div>
-                  ))
+                    )
+                  })
                 }
                 {myTasks.length > myTasksLimit && <button onClick={() => setMyTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-white border border-[#28C8C8]/20 rounded-xl hover:bg-[#28C8C8]/5 transition-colors">查看更多</button>}
               </div>
@@ -849,26 +859,23 @@ export default function RoomieTaskApp() {
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
                     const isOpen = task.status === 'open';
-                    const isDone = task.status === 'done';
                     const holder = users.find(u => u.id === task.currentHolderId);
                     return (
                       <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isOpen ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100'}`}>
-                        <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl ${isDone ? 'opacity-30 bg-gray-50' : isOpen ? 'bg-white' : 'bg-gray-50'}`}>{task.icon}</div>
-                          <div>
-                            <div className="font-bold text-base text-gray-800">{task.name}</div>
-                            <div className="text-sm text-gray-500 font-bold mt-0.5 flex items-center gap-1.5">
-                              <span className="font-mono bg-gray-100 px-1.5 rounded">{task.date}</span>
-                              <span>·</span>
-                              <div className="flex items-center gap-1">
-                                {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
-                                {holder ? holder.name : '未分配'}
-                              </div>
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl shrink-0 ${isOpen ? 'bg-white' : 'bg-gray-50'}`}>{task.icon}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
+                              <span className="text-xs text-gray-500 font-bold truncate">{holder ? holder.name : '未分配'}</span>
                             </div>
+                            <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                            <div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div>
                           </div>
                         </div>
-                        {isOpen && <button onClick={() => setTaskActionConfirm({ action: 'claim', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all">接單</button>}
-                        {isDone && <div className="w-10 h-10 bg-green-50 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>}
+                        <div className="flex gap-2 shrink-0 ml-3">
+                          {isOpen && <button onClick={() => setTaskActionConfirm({ action: 'claim', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">接單</button>}
+                        </div>
                       </div>
                     )
                   })
@@ -877,7 +884,6 @@ export default function RoomieTaskApp() {
               </div>
             )}
 
-            {/* 🌟 新增：歷史紀錄列表 */}
             {rosterTab === 'history' && (
               <div className="space-y-3">
                 {historyTasks.length === 0 ? 
@@ -887,27 +893,39 @@ export default function RoomieTaskApp() {
                   historyTasks.map(task => {
                     const isFailed = task.status === 'failed';
                     const holder = users.find(u => u.id === (task.currentHolderId || task.originalHolderId));
+                    
+                    let guiltyUserId = task.currentHolderId;
+                    if ((task.status === 'open' || task.status === 'failed') && task.originalHolderId) {
+                        guiltyUserId = task.originalHolderId;
+                    } else if (!guiltyUserId && task.originalHolderId) {
+                        guiltyUserId = task.originalHolderId;
+                    }
+                    const isGuiltyUser = currentUser && guiltyUserId === currentUser?.id;
+
                     return (
                       <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isFailed ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
-                        <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl opacity-60 bg-white`}>{task.icon}</div>
-                          <div>
-                            <div className="font-bold text-base text-gray-800">{task.name}</div>
-                            <div className="text-sm text-gray-500 font-bold mt-0.5 flex items-center gap-1.5">
-                              <span className="font-mono bg-white px-1.5 rounded border">{task.date}</span>
-                              <span>·</span>
-                              <div className="flex items-center gap-1">
-                                {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
-                                {holder ? holder.name : '未知'}
-                              </div>
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl opacity-60 bg-white shrink-0`}>{task.icon}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
+                              <span className="text-xs text-gray-500 font-bold truncate">{holder ? holder.name : '未知'}</span>
                             </div>
+                            <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                            <div className="text-sm text-gray-500 font-bold mt-0.5">{task.date}</div>
                           </div>
                         </div>
-                        {isFailed ? (
-                          <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all">有做忘了按</button>
-                        ) : (
-                          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>
-                        )}
+                        <div className="flex gap-2 shrink-0 ml-3">
+                          {isFailed ? (
+                            isGuiltyUser ? (
+                              <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">有做忘了按</button>
+                            ) : (
+                              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-red-500"><X size={20}/></div>
+                            )
+                          ) : (
+                            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>
+                          )}
+                        </div>
                       </div>
                     )
                   })
