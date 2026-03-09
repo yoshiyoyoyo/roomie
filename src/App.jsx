@@ -5,7 +5,7 @@ import { getDatabase, ref, onValue, set, update, serverTimestamp, remove, get, o
 import { 
   Trash2, Wallet, Users, CheckCircle2, Settings, Edit2, X, 
   ChevronDown, ChevronUp, Check, Loader2, LogOut, Home, Plus, 
-  ArrowRight, AlertCircle, RotateCcw, Copy, Send
+  ArrowRight, AlertCircle, RotateCcw, Copy, Send, History
 } from 'lucide-react';
 
 const LIFF_ID = "2009134573-7SuphV8b"; 
@@ -159,7 +159,7 @@ export default function RoomieTaskApp() {
             setMyGroups(joinedGroups);
             localStorage.setItem('roomie_groups', JSON.stringify(joinedGroups));
           } catch (dbError) {
-            console.error("強制同步群組失敗", dbError);
+            console.error("強制同步群組失敗:", dbError);
             setMyGroups(getSavedGroups());
           }
 
@@ -171,13 +171,13 @@ export default function RoomieTaskApp() {
           }
           
         } catch (profileError) {
-          console.error("LIFF getProfile 失敗", profileError);
+          console.error("LIFF getProfile 失敗:", profileError);
           liff.logout();
           window.location.reload();
         }
 
       } catch (err) {
-        console.error("LIFF 初始化失敗", err);
+        console.error("LIFF 初始化失敗:", err);
         if (err.message && err.message.toLowerCase().includes("expired")) {
           liff.logout();
           window.location.reload();
@@ -476,6 +476,57 @@ export default function RoomieTaskApp() {
     if (action === 'complete') await completeTask(task);
     if (action === 'release') await releaseTask(task);
     if (action === 'claim') await claimTask(task);
+    if (action === 'revert') await revertTaskPenalty(task); // 🌟 觸發返還機制
+  };
+
+  // 🌟 新增：退還罰款並標記完成
+  const revertTaskPenalty = async (task) => {
+    const userCount = users.length;
+    if (userCount <= 1) return;
+
+    let guiltyUserId = task.currentHolderId;
+    if (task.status === 'open' && task.originalHolderId) {
+        guiltyUserId = task.originalHolderId;
+    } else if (!guiltyUserId && task.originalHolderId) {
+        guiltyUserId = task.originalHolderId;
+    }
+
+    const price = task.price || 0;
+    const totalPenalty = price * (userCount - 1);
+    const updates = {};
+    const tempBalances = {};
+    users.forEach(u => tempBalances[u.id] = u.balance || 0);
+
+    // 1. 返還懲罰
+    if (guiltyUserId && tempBalances[guiltyUserId] !== undefined) {
+        tempBalances[guiltyUserId] += totalPenalty;
+        users.forEach(u => {
+            if (u.id !== guiltyUserId) {
+                tempBalances[u.id] -= price;
+            }
+        });
+    }
+
+    // 2. 正常發放完成賞金（如果是幫別人做的）
+    if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
+        tempBalances[task.originalHolderId] -= price;
+        tempBalances[guiltyUserId] += price;
+    }
+
+    // 3. 寫入資料庫
+    Object.keys(tempBalances).forEach(uid => {
+        updates[`groups/${groupId}/users/${uid}/balance`] = tempBalances[uid];
+    });
+
+    updates[`groups/${groupId}/tasks/${task.id}/status`] = 'done';
+    
+    const logId = Date.now();
+    updates[`groups/${groupId}/logs/${logId}`] = { 
+        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並標記完成`, type: 'info', time: new Date().toLocaleTimeString() 
+    };
+
+    await update(ref(db), updates);
+    setAlertMsg("已成功退還扣款並標記完成！");
   };
 
   const completeTask = async (task) => {
@@ -677,6 +728,12 @@ export default function RoomieTaskApp() {
   const myTasks = visibleTasks.filter(t => t.currentHolderId === currentUser?.id && t.status === 'pending');
   const allTasks = visibleTasks;
 
+  // 🌟 新增：過濾並排序歷史任務 (近30筆)
+  const historyTasks = currentCycleTasks
+    .filter(t => t.status === 'done' || t.status === 'failed')
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 30);
+
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#28C8C8]"/></div>;
 
   if (viewState === 'landing') return (
@@ -748,9 +805,11 @@ export default function RoomieTaskApp() {
         {view === 'roster' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
+              {/* 🌟 修改：加入歷史紀錄分頁按鈕 */}
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
-                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>近期待辦</button>
-                <button onClick={() => setRosterTab('all')} className={`flex-1 py-3 rounded-xl text-base font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>任務列表</button>
+                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>待辦</button>
+                <button onClick={() => setRosterTab('all')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>列表</button>
+                <button onClick={() => setRosterTab('history')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'history' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>歷史</button>
               </div>
             </div>
 
@@ -817,6 +876,45 @@ export default function RoomieTaskApp() {
                 {allTasks.length > allTasksLimit && <button onClick={() => setAllTasksLimit(l => l + 5)} className="w-full py-3 text-center text-[#28C8C8] font-bold text-sm bg-white border border-[#28C8C8]/20 rounded-xl hover:bg-[#28C8C8]/5 transition-colors">查看更多</button>}
               </div>
             )}
+
+            {/* 🌟 新增：歷史紀錄列表 */}
+            {rosterTab === 'history' && (
+              <div className="space-y-3">
+                {historyTasks.length === 0 ? 
+                  <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                    <p className="text-gray-400 text-base">目前沒有歷史紀錄</p>
+                  </div> :
+                  historyTasks.map(task => {
+                    const isFailed = task.status === 'failed';
+                    const holder = users.find(u => u.id === (task.currentHolderId || task.originalHolderId));
+                    return (
+                      <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isFailed ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-3xl opacity-60 bg-white`}>{task.icon}</div>
+                          <div>
+                            <div className="font-bold text-base text-gray-800">{task.name}</div>
+                            <div className="text-sm text-gray-500 font-bold mt-0.5 flex items-center gap-1.5">
+                              <span className="font-mono bg-white px-1.5 rounded border">{task.date}</span>
+                              <span>·</span>
+                              <div className="flex items-center gap-1">
+                                {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
+                                {holder ? holder.name : '未知'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {isFailed ? (
+                          <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all">有做忘了按</button>
+                        ) : (
+                          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-500"><Check size={20}/></div>
+                        )}
+                      </div>
+                    )
+                  })
+                }
+              </div>
+            )}
+
           </div>
         )}
 
@@ -963,6 +1061,7 @@ export default function RoomieTaskApp() {
                {taskActionConfirm.action === 'complete' && '確定完成任務？'}
                {taskActionConfirm.action === 'release' && '確定沒空做嗎？'}
                {taskActionConfirm.action === 'claim' && '確定要接下此任務？'}
+               {taskActionConfirm.action === 'revert' && '確定補按完成？'}
              </h3>
              <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
                {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
@@ -976,6 +1075,12 @@ export default function RoomieTaskApp() {
                  <>
                    接手「{taskActionConfirm.task.name}」完成後將獲得 ${taskActionConfirm.task.price}！<br />
                    若未完成，將會扣除相應金額作為懲罰喔！
+                 </>
+               )}
+               {taskActionConfirm.action === 'revert' && (
+                 <>
+                   點擊後將把「{taskActionConfirm.task.name}」標記為已完成。<br />
+                   系統會自動退還之前的逾期罰款，並重新結算賞金！
                  </>
                )}
              </p>
