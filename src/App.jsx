@@ -735,6 +735,10 @@ export default function RoomieTaskApp() {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 
+  // 🌟 新增：計算紅點顯示條件
+  const hasPendingTodayTasks = myTasks.some(t => t.date <= todayStr);
+  const hasOpenTasks = allTasks.some(t => t.status === 'open');
+
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#28C8C8]"/></div>;
 
   if (viewState === 'landing') return (
@@ -807,9 +811,19 @@ export default function RoomieTaskApp() {
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
-                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>待辦</button>
-                <button onClick={() => setRosterTab('all')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>列表</button>
-                <button onClick={() => setRosterTab('history')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${rosterTab === 'history' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>歷史</button>
+                <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex justify-center items-center ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>
+                  <div className="relative">
+                    待辦
+                    {hasPendingTodayTasks && <span className="absolute -top-0.5 -right-2.5 w-2 h-2 bg-red-500 rounded-full"></span>}
+                  </div>
+                </button>
+                <button onClick={() => setRosterTab('all')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex justify-center items-center ${rosterTab === 'all' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>
+                  <div className="relative">
+                    列表
+                    {hasOpenTasks && <span className="absolute -top-0.5 -right-2.5 w-2 h-2 bg-red-500 rounded-full"></span>}
+                  </div>
+                </button>
+                <button onClick={() => setRosterTab('history')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex justify-center items-center ${rosterTab === 'history' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>歷史</button>
               </div>
             </div>
 
