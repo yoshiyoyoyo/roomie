@@ -97,85 +97,92 @@ export default function RoomieTaskApp() {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // 一般文字推播
-  const sendLiffMessage = async (msg) => {
+  // 🌟 共用 Flex 發送器
+  const sendFlexMessage = async (altText, flexContents) => {
     try {
       if (liff.isInClient()) {
-        await liff.sendMessages([{ type: "text", text: msg }]);
-      }
-    } catch (e) {
-      console.error("發送 LINE 訊息失敗:", e);
-    }
-  };
-
-  // 🌟 新增：家事設定專屬的 Flex Message 推播
-  const sendConfigFlexMessage = async (actionText, configName, price, freq, startDate) => {
-    try {
-      if (liff.isInClient()) {
-        const flexMsg = {
-          type: "flex",
-          altText: `家事交易所通知：${actionText} ${configName}`,
-          contents: {
-            type: "bubble",
-            header: {
-              type: "box",
-              layout: "vertical",
-              backgroundColor: "#FFDC35",
-              paddingAll: "12px",
-              contents: [
-                {
-                  type: "text",
-                  text: actionText,
-                  weight: "bold",
-                  color: "#333333",
-                  size: "sm"
-                }
-              ]
-            },
-            body: {
-              type: "box",
-              layout: "vertical",
-              paddingAll: "20px",
-              contents: [
-                {
-                  type: "text",
-                  text: configName,
-                  weight: "bold",
-                  size: "xl",
-                  color: "#111111",
-                  wrap: true
-                },
-                {
-                  type: "text",
-                  text: `每次 $${price}`,
-                  size: "sm",
-                  color: "#555555",
-                  margin: "md"
-                },
-                {
-                  type: "text",
-                  text: `每 ${freq} 日一次`,
-                  size: "sm",
-                  color: "#555555",
-                  margin: "sm"
-                },
-                {
-                  type: "text",
-                  text: `排班起始日 ${startDate}`,
-                  size: "sm",
-                  color: "#555555",
-                  margin: "sm"
-                }
-              ]
-            }
-          }
-        };
-        await liff.sendMessages([flexMsg]);
+        await liff.sendMessages([{ type: "flex", altText: altText, contents: flexContents }]);
       }
     } catch (e) {
       console.error("發送 LINE Flex 訊息失敗:", e);
     }
   };
+
+  // 🌟 新增/編輯/刪除家事 Flex
+  const sendConfigFlex = (action, taskName, price, freq, startDate) => {
+    const colorMap = { '新增家事': '#00DB00', '編輯家事': '#FFDC35', '刪除家事': '#FF7575' };
+    const headerColor = colorMap[action] || '#FFDC35';
+    const flexMsg = {
+      "type": "bubble", "size": "hecto",
+      "header": { "type": "box", "layout": "vertical", "contents": [ { "type": "text", "text": action, "color": "#FFFFFF", "size": "xl", "flex": 1, "margin": "none", "weight": "regular", "align": "center" } ] },
+      "body": {
+        "type": "box", "layout": "vertical",
+        "contents": [
+          { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": taskName, "color": "#3C3C3C", "size": "xl", "flex": 1, "weight": "regular", "align": "start", "margin": "none" } ], "margin": "none" },
+          { "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm",
+            "contents": [
+              { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": `每次 $${price}`, "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ], "margin": "none" },
+              { "type": "box", "layout": "baseline", "spacing": "sm", "contents": [ { "type": "text", "text": `每 ${freq} 日一次`, "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ] },
+              { "type": "box", "layout": "baseline", "spacing": "sm", "contents": [ { "type": "text", "text": `排班起始日 ${startDate}`, "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ] }
+            ]
+          }
+        ]
+      },
+      "footer": {
+        "type": "box", "layout": "vertical", "spacing": "sm",
+        "contents": [ { "type": "button", "style": "link", "height": "sm", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } } ], "flex": 0
+      },
+      "styles": { "header": { "backgroundColor": headerColor } }
+    };
+    sendFlexMessage(`${action}：${taskName}`, flexMsg);
+  };
+
+  // 🌟 完成/釋出/接單/補按 Flex
+  const sendTaskFlex = (action, dateStr, taskName, footerText) => {
+    const dateObj = new Date(dateStr);
+    const formattedDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+    const flexMsg = {
+      "type": "bubble", "size": "hecto",
+      "header": { "type": "box", "layout": "vertical", "contents": [ { "type": "text", "text": action, "color": "#FFFFFF", "size": "xl", "flex": 1, "margin": "none", "weight": "regular", "align": "center" } ] },
+      "body": {
+        "type": "box", "layout": "vertical",
+        "contents": [
+          { "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm", "contents": [ { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": `(${formattedDate})`, "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ], "margin": "none" } ] },
+          { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": taskName, "color": "#3C3C3C", "size": "xl", "flex": 1, "weight": "regular", "align": "start", "margin": "none" } ], "margin": "none" },
+          { "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm", "contents": [ { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": footerText, "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ], "margin": "none" } ] }
+        ]
+      },
+      "footer": {
+        "type": "box", "layout": "vertical", "spacing": "sm",
+        "contents": [ { "type": "button", "style": "link", "height": "sm", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } } ], "flex": 0
+      },
+      "styles": { "header": { "backgroundColor": "#28c8c8" } }
+    };
+    sendFlexMessage(`${action}：${taskName}`, flexMsg);
+  };
+
+  // 🌟 帳務結清 Flex
+  const sendSettleFlex = (fromName, toName, amount) => {
+    const flexMsg = {
+      "type": "bubble", "size": "hecto",
+      "header": { "type": "box", "layout": "vertical", "contents": [ { "type": "text", "text": "結清帳務", "color": "#282828", "size": "xl", "flex": 1, "margin": "none", "weight": "regular", "align": "center" } ] },
+      "body": {
+        "type": "box", "layout": "vertical",
+        "contents": [
+          { "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm", "contents": [] },
+          { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": `${fromName}給${toName} $${amount}`, "color": "#3C3C3C", "size": "xl", "flex": 1, "weight": "regular", "align": "start", "margin": "none" } ], "margin": "none" },
+          { "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm", "contents": [ { "type": "box", "layout": "baseline", "spacing": "none", "contents": [ { "type": "text", "text": "你的錢錢我就賺走囉", "color": "#aaaaaa", "size": "sm", "flex": 1, "align": "start" } ], "margin": "none" } ] }
+        ]
+      },
+      "footer": {
+        "type": "box", "layout": "vertical", "spacing": "sm",
+        "contents": [ { "type": "button", "style": "link", "height": "sm", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } } ], "flex": 0
+      },
+      "styles": { "header": { "backgroundColor": "#FFD306" } }
+    };
+    sendFlexMessage(`帳務結清：${fromName}給${toName} $${amount}`, flexMsg);
+  };
+
 
   useEffect(() => {
     const savedVer = localStorage.getItem('app_version');
@@ -607,7 +614,7 @@ export default function RoomieTaskApp() {
 
     await update(ref(db), updates);
     setAlertMsg("已成功退還扣款並標記完成！");
-    sendLiffMessage(`🏠 家事交易所通知\n我補按了「${task.name}」，已退還罰款並重新結算賞金！`);
+    sendTaskFlex('補按家事', task.date, task.name, '休想賺走我的錢錢'); 
   };
 
   const completeTask = async (task) => {
@@ -630,21 +637,21 @@ export default function RoomieTaskApp() {
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
     await update(ref(db), updates);
-    sendLiffMessage(`🏠 家事交易所通知\n我剛剛完成了「${task.name}」！`);
+    sendTaskFlex('完成家事', task.date, task.name, '休想賺走我的錢錢'); 
   };
   
   const releaseTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
-    sendLiffMessage(`🏠 家事交易所通知\n我釋出了「${task.name}」，等待好心人接單！`);
+    sendTaskFlex('釋出家事', task.date, task.name, '誰來救救我'); 
   };
 
   const claimTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
-    sendLiffMessage(`🏠 家事交易所通知\n我接手了「${task.name}」！`);
+    sendTaskFlex('接單家事', task.date, task.name, '你的錢錢我就賺走囉'); 
   };
 
   const toggleUserInOrder = (uid) => {
@@ -747,7 +754,7 @@ export default function RoomieTaskApp() {
       setAlertMsg("排班已更新！");
       
       const flexActionText = editingConfigId ? '編輯家事' : '新增家事';
-      sendConfigFlexMessage(flexActionText, configForm.name, configForm.price, freqNum, nextDate);
+      sendConfigFlex(flexActionText, configForm.name, configForm.price, freqNum, nextDate);
 
     } catch (error) {
       console.error(error);
@@ -784,7 +791,7 @@ export default function RoomieTaskApp() {
        setDeleteTarget(null);
        setAlertMsg("已刪除該家事規則！");
 
-       sendConfigFlexMessage('刪除家事', targetName, targetPrice, targetFreq, targetDate); 
+       sendConfigFlex('刪除家事', targetName, targetPrice, targetFreq, targetDate); 
     }
   };
 
@@ -822,7 +829,7 @@ export default function RoomieTaskApp() {
     updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${tx.fromName} 支付了 $${tx.amount} 給 ${tx.toName} (已結清)`, type: 'info', time: new Date().toLocaleTimeString() };
     await update(ref(db), updates);
     setAlertMsg("結帳成功！");
-    sendLiffMessage(`🏠 家事交易所通知\n我剛支付了 $${tx.amount} 給 ${tx.toName}，帳務已結清！`);
+    sendSettleFlex(tx.fromName, tx.toName, tx.amount);
   };
 
   const todayStr = getTodayString();
