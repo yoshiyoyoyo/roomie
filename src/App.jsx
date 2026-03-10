@@ -24,12 +24,26 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-const getTodayString = () => new Date().toISOString().split('T')[0];
-const addDays = (dateStr, days) => {
-  const result = new Date(dateStr);
-  result.setDate(result.getDate() + parseInt(days));
-  return result.toISOString().split('T')[0];
+// 🌟 修改：使用本地時區取得今天日期
+const getTodayString = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
+
+// 🌟 修改：使用本地時區計算未來日期
+const addDays = (dateStr, days) => {
+  const [y, m, d] = dateStr.split('-');
+  const result = new Date(y, m - 1, d);
+  result.setDate(result.getDate() + parseInt(days));
+  const year = result.getFullYear();
+  const month = String(result.getMonth() + 1).padStart(2, '0');
+  const day = String(result.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const getSavedGroups = () => {
@@ -1155,7 +1169,7 @@ export default function RoomieTaskApp() {
                         </div>
                         <div className="flex gap-2 shrink-0 ml-3">
                           {isExpired ? (
-                            <span className="text-xs text-gray-400 font-bold bg-white px-2 py-1 border border-gray-200 rounded">已過期</span>
+                            <span className="text-sm text-gray-400 font-bold bg-white px-4 py-2 border border-gray-200 rounded-xl">已過期</span>
                           ) : isFailed ? (
                             isGuiltyUser ? (
                               <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">補按</button>
