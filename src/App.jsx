@@ -90,14 +90,17 @@ export default function RoomieTaskApp() {
   const [isEditingConfig, setIsEditingConfig] = useState(false);
   const [editingConfigId, setEditingConfigId] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  
+  // 🌟 表單狀態加入一次性任務欄位
   const [configForm, setConfigForm] = useState({ 
-    name: '', price: 30, freq: 7, icon: '🧹', assigneeOrder: [], nextDate: getTodayString() 
+    type: 'scheduled', // scheduled 或 onetime
+    name: '', price: 30, freq: 7, icon: '🧹', assigneeOrder: [], nextDate: getTodayString(),
+    requiredPeople: 1, deadline: getTodayString()
   });
   
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // 🌟 共用 Flex 發送器
   const sendFlexMessage = async (altText, flexContents) => {
     try {
       if (liff.isInClient()) {
@@ -115,8 +118,7 @@ export default function RoomieTaskApp() {
     ]
   });
 
-  const sendConfigFlex = (actionText, taskName, price, freq, startDate) => {
-    const freqText = freq === 0 ? "一次性" : `1次/${freq}天`;
+  const sendConfigFlex = (actionText, taskName, price, row2Label, row2Value, row3Label, row3Value) => {
     const flexMsg = {
       "type": "bubble",
       "body": {
@@ -128,8 +130,8 @@ export default function RoomieTaskApp() {
           { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
             "contents": [
               createFlexRow("金額", `$${price}/次`),
-              createFlexRow("頻率", freqText),
-              createFlexRow("排班起始日", startDate)
+              createFlexRow(row2Label, row2Value),
+              createFlexRow(row3Label, row3Value)
             ]
           }
         ]
@@ -424,8 +426,7 @@ export default function RoomieTaskApp() {
     allUsers.forEach(u => tempBalances[u.id] = u.balance || 0);
 
     Object.values(data.tasks).forEach(task => {
-      // 🌟 修改：若是公共任務 (無 originalHolderId) 且狀態為 open，不進行懲罰
-      if (task.date < today && task.status !== 'done' && task.status !== 'failed') {
+      if (task.date < today && task.status !== 'done' && task.status !== 'failed' && task.status !== 'expired') {
         const price = task.price || 0;
         let guiltyUserId = task.currentHolderId;
 
@@ -435,6 +436,7 @@ export default function RoomieTaskApp() {
           guiltyUserId = task.originalHolderId;
         }
 
+        // 🌟 有綁定負責人，逾期扣款
         if (guiltyUserId && tempBalances[guiltyUserId] !== undefined) {
            const totalPenalty = price * (userCount - 1);
            tempBalances[guiltyUserId] -= totalPenalty;
@@ -449,7 +451,6 @@ export default function RoomieTaskApp() {
 
            const guiltyUserName = data.users[guiltyUserId]?.name || '未知成員';
            const logId = new Date().getTime() + Math.floor(Math.random() * 1000);
-           
            const dateObj = new Date(task.date);
            const formattedDate = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
 
@@ -459,6 +460,11 @@ export default function RoomieTaskApp() {
              type: 'warning',
              time: new Date().toLocaleTimeString()
            };
+           hasUpdates = true;
+        } 
+        // 🌟 一次性/公共任務無人接單，自動過期
+        else if (!guiltyUserId) {
+           updates[`groups/${gId}/tasks/${task.id}/status`] = 'expired';
            hasUpdates = true;
         }
       }
@@ -483,50 +489,32 @@ export default function RoomieTaskApp() {
     const limitDate = addDays(getTodayString(), 45); 
 
     configs.forEach(cfg => {
-      let nextDate = cfg.nextDate || getTodayString();
-      if (nextDate === '9999-12-31') return; // 一次性任務已生成完畢，跳過
+      if (cfg.type === 'onetime' || cfg.nextDate === '9999-12-31') return; // 一次性任務不自動衍生
 
-      let isPublic = (!cfg.assigneeOrder || cfg.assigneeOrder.length === 0);
-      let order = isPublic ? allUserIds : cfg.assigneeOrder.filter(uid => allUserIds.includes(uid));
-      if (order.length === 0) order = allUserIds; // 容錯機制
+      let nextDate = cfg.nextDate || getTodayString();
+      let order = (cfg.assigneeOrder && cfg.assigneeOrder.length > 0) ? cfg.assigneeOrder : allUserIds;
+      order = order.filter(uid => allUserIds.includes(uid));
+      if (order.length === 0) order = allUserIds;
 
       let runningAssigneeId = cfg.nextAssigneeId;
       if (!runningAssigneeId || !order.includes(runningAssigneeId)) runningAssigneeId = order[0];
 
-      let freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '0') : (cfg.freq || 0);
-      let isOneTime = freqNum === 0;
       let loopCount = 0;
-
       while (nextDate <= limitDate && loopCount < 50) {
         loopCount++;
         const tid = `task-${cfg.id}-${nextDate.replace(/-/g, '')}`;
         if (!data.tasks || !data.tasks[tid]) {
             updates[`groups/${gId}/tasks/${tid}`] = {
               id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
-              date: nextDate, 
-              status: isPublic ? 'open' : 'pending',
-              currentHolderId: isPublic ? null : runningAssigneeId,
-              originalHolderId: isPublic ? null : runningAssigneeId
+              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId, originalHolderId: runningAssigneeId
             };
-            hasUpdates = true;
         }
-
-        if (isOneTime) {
-            nextDate = '9999-12-31'; 
-            updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
-            hasUpdates = true;
-            break;
-        }
-
-        if (!isPublic) {
-            const currIdx = order.indexOf(runningAssigneeId);
-            const nextIdx = (currIdx + 1) % order.length;
-            runningAssigneeId = order[nextIdx];
-            updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
-        }
-        
-        nextDate = addDays(nextDate, freqNum);
+        const currIdx = order.indexOf(runningAssigneeId);
+        const nextIdx = (currIdx + 1) % order.length;
+        runningAssigneeId = order[nextIdx];
+        nextDate = addDays(nextDate, typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : (cfg.freq || 7));
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
+        updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
         hasUpdates = true;
       }
     });
@@ -628,7 +616,6 @@ export default function RoomieTaskApp() {
     const tempBalances = {};
     users.forEach(u => tempBalances[u.id] = u.balance || 0);
 
-    // 1. 退還所有逾期罰款 (不管是公共還是普通，有扣款就全退)
     if (guiltyUserId && tempBalances[guiltyUserId] !== undefined) {
         tempBalances[guiltyUserId] += totalPenalty;
         users.forEach(u => {
@@ -638,30 +625,9 @@ export default function RoomieTaskApp() {
         });
     }
 
-    // 2. 發放完成賞金
-    const isPublic = !task.originalHolderId;
-    if (isPublic) {
-        // 公共懸賞均攤扣款
-        const otherUsers = users.filter(u => u.id !== guiltyUserId);
-        if (otherUsers.length > 0) {
-            const baseSplit = Math.floor(price / otherUsers.length);
-            let remainder = price % otherUsers.length;
-            
-            tempBalances[guiltyUserId] += price;
-            otherUsers.forEach(u => {
-                let deduct = baseSplit + (remainder > 0 ? 1 : 0);
-                remainder--;
-                tempBalances[u.id] -= deduct;
-            });
-        } else {
-            tempBalances[guiltyUserId] += price;
-        }
-    } else {
-        // 普通代做扣款
-        if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
-            tempBalances[task.originalHolderId] -= price;
-            tempBalances[guiltyUserId] += price;
-        }
+    if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
+        tempBalances[task.originalHolderId] -= price;
+        tempBalances[guiltyUserId] += price;
     }
 
     Object.keys(tempBalances).forEach(uid => {
@@ -672,7 +638,7 @@ export default function RoomieTaskApp() {
     
     const logId = Date.now();
     updates[`groups/${groupId}/logs/${logId}`] = { 
-        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並重新結算`, type: 'info', time: new Date().toLocaleTimeString() 
+        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並標記完成`, type: 'info', time: new Date().toLocaleTimeString() 
     };
 
     await update(ref(db), updates);
@@ -703,7 +669,7 @@ export default function RoomieTaskApp() {
             });
         }
         const logId = Date.now();
-        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了公共懸賞「${task.name}」，由其他人平攤賞金`, type: 'success', time: new Date().toLocaleTimeString() };
+        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了公共任務「${task.name}」，由其他人平攤賞金`, type: 'success', time: new Date().toLocaleTimeString() };
     } else if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
         // 🌟 普通任務代做
         const originalUser = users.find(u => u.id === task.originalHolderId);
@@ -717,7 +683,6 @@ export default function RoomieTaskApp() {
             };
         }
     } else {
-        // 🌟 自己做自己的
         const logId = Date.now();
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
@@ -752,9 +717,9 @@ export default function RoomieTaskApp() {
   const handleOpenAddConfig = () => {
     setEditingConfigId(null);
     setConfigForm({ 
-      name: '', price: 30, freq: 7, icon: '🧹', 
-      assigneeOrder: [], // 預設留空為公共懸賞
-      nextDate: getTodayString() 
+      type: 'scheduled',
+      name: '', price: 30, freq: 7, icon: '🧹', assigneeOrder: [], nextDate: getTodayString(),
+      requiredPeople: 1, deadline: getTodayString()
     });
     setFormError('');
     setIsEditingConfig(true);
@@ -766,75 +731,68 @@ export default function RoomieTaskApp() {
 
     try {
       if (!configForm.name.trim()) { alert("請輸入家事名稱！"); setIsSaving(false); return; }
-      if (configForm.price < 0 || configForm.freq < 0) { alert("金額與頻率不可為負數！"); setIsSaving(false); return; }
+      if (configForm.price < 0 || configForm.freq < 0 || configForm.requiredPeople < 1) { alert("數值設定錯誤！"); setIsSaving(false); return; }
       
-      let assigneeOrder = configForm.assigneeOrder || [];
-      const isPublic = assigneeOrder.length === 0;
-
+      const isOneTime = configForm.type === 'onetime';
       const id = editingConfigId || `cfg-${generateId()}`;
-      let freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '0');
-      const isOneTime = freqNum === 0;
-      const freqStr = isOneTime ? '一次性' : `每 ${freqNum} 天`;
-
       const updates = {};
 
+      // 清除舊有的待辦/開放任務，以便重新生成
       let earliestPendingDate = null;
       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
-      
       if (tasksSnap.exists()) {
           const allTasks = tasksSnap.val();
-          const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done' && t.status !== 'failed');
+          const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done' && t.status !== 'failed' && t.status !== 'expired');
           if (relatedTasks.length > 0) {
               relatedTasks.sort((a,b) => a.date.localeCompare(b.date));
               earliestPendingDate = relatedTasks[0].date;
-              relatedTasks.forEach(t => {
-                  updates[`groups/${groupId}/tasks/${t.id}`] = null;
-              });
+              relatedTasks.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
           }
       }
 
-      let nextDate;
-      if (editingConfigId && earliestPendingDate) {
-          nextDate = earliestPendingDate; 
-      } else {
-          nextDate = configForm.nextDate || getTodayString();
-      }
-
-      let runningAssigneeId = assigneeOrder.length > 0 ? assigneeOrder[0] : null;
-      if (editingConfigId && configForm.nextAssigneeId && assigneeOrder.includes(configForm.nextAssigneeId)) {
-          runningAssigneeId = configForm.nextAssigneeId;
-      }
-
-      const limitDate = addDays(getTodayString(), 45);
-      let loopCount = 0;
-
-      while (nextDate <= limitDate && loopCount < 50) {
-          loopCount++;
-          const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
-          updates[`groups/${groupId}/tasks/${tid}`] = {
-              id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
-              date: nextDate, 
-              status: isPublic ? 'open' : 'pending',
-              currentHolderId: isPublic ? null : runningAssigneeId,
-              originalHolderId: isPublic ? null : runningAssigneeId
+      if (isOneTime) {
+          // 🌟 產生一次性任務
+          for (let i = 0; i < configForm.requiredPeople; i++) {
+              const tid = `task-${id}-onetime-${Date.now()}-${i}`;
+              updates[`groups/${groupId}/tasks/${tid}`] = {
+                  id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
+                  date: configForm.deadline, status: 'open', currentHolderId: null, originalHolderId: null
+              };
+          }
+          updates[`groups/${groupId}/taskConfigs/${id}`] = {
+              ...configForm, id, freq: 0, nextDate: '9999-12-31'
           };
-          if (isOneTime) {
-              nextDate = '9999-12-31';
-              break;
+      } else {
+          // 🌟 產生常規排程任務
+          let assigneeOrder = configForm.assigneeOrder || [];
+          let runningAssigneeId = assigneeOrder.length > 0 ? assigneeOrder[0] : null;
+          if (editingConfigId && configForm.nextAssigneeId && assigneeOrder.includes(configForm.nextAssigneeId)) {
+              runningAssigneeId = configForm.nextAssigneeId;
           }
-          if (!isPublic) {
-              const currIdx = assigneeOrder.indexOf(runningAssigneeId);
-              const nextIdx = (currIdx + 1) % assigneeOrder.length;
-              runningAssigneeId = assigneeOrder[nextIdx];
-          }
-          nextDate = addDays(nextDate, freqNum);
-      }
+          
+          let nextDate = (editingConfigId && earliestPendingDate) ? earliestPendingDate : (configForm.nextDate || getTodayString());
+          const freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '7');
+          const limitDate = addDays(getTodayString(), 45);
+          let loopCount = 0;
 
-      const configData = { 
-        ...configForm, id, freq: freqStr, assigneeOrder, 
-        nextAssigneeId: runningAssigneeId, nextDate: nextDate 
-      };
-      updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
+          while (nextDate <= limitDate && loopCount < 50) {
+              loopCount++;
+              const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
+              updates[`groups/${groupId}/tasks/${tid}`] = {
+                  id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
+                  date: nextDate, status: 'pending', currentHolderId: runningAssigneeId, originalHolderId: runningAssigneeId
+              };
+              if (assigneeOrder.length > 0) {
+                  const currIdx = assigneeOrder.indexOf(runningAssigneeId);
+                  const nextIdx = (currIdx + 1) % assigneeOrder.length;
+                  runningAssigneeId = assigneeOrder[nextIdx];
+              }
+              nextDate = addDays(nextDate, freqNum);
+          }
+          updates[`groups/${groupId}/taskConfigs/${id}`] = {
+              ...configForm, id, freq: `每 ${freqNum} 天`, nextAssigneeId: runningAssigneeId, nextDate: nextDate 
+          };
+      }
 
       const logId = Date.now();
       const actionTypeText = editingConfigId ? '編輯' : '新增';
@@ -848,7 +806,11 @@ export default function RoomieTaskApp() {
       setAlertMsg("家事設定已更新！");
       
       const flexActionText = editingConfigId ? '家事編輯' : '家事新增';
-      sendConfigFlex(flexActionText, configForm.name, configForm.price, freqNum, configForm.nextDate);
+      if (isOneTime) {
+          sendConfigFlex(flexActionText, configForm.name, configForm.price, '需求人數', `${configForm.requiredPeople}人`, '截止日期', configForm.deadline);
+      } else {
+          sendConfigFlex(flexActionText, configForm.name, configForm.price, '頻率', `1次/${configForm.freq}天`, '排班起始日', configForm.nextDate);
+      }
 
     } catch (error) {
       console.error(error);
@@ -863,8 +825,12 @@ export default function RoomieTaskApp() {
        const targetConfig = taskConfigs.find(c => c.id === deleteTarget.id);
        const targetName = targetConfig ? targetConfig.name : '未知家事';
        const targetPrice = targetConfig ? targetConfig.price : 0;
-       const targetFreq = targetConfig && typeof targetConfig.freq === 'string' ? parseInt(targetConfig.freq.match(/\d+/)?.[0] || '0') : (targetConfig ? targetConfig.freq : 0);
-       const targetDate = targetConfig ? (targetConfig.nextDate || '未知') : '未知';
+       
+       const isOneTime = targetConfig?.type === 'onetime';
+       const row2Label = isOneTime ? '需求人數' : '頻率';
+       const row2Value = isOneTime ? `${targetConfig.requiredPeople || 1}人` : `1次/${targetConfig.freq || 7}天`;
+       const row3Label = isOneTime ? '截止日期' : '排班起始日';
+       const row3Value = isOneTime ? (targetConfig.deadline || '未知') : (targetConfig.nextDate || '未知');
 
        const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
        const updates = {};
@@ -885,7 +851,7 @@ export default function RoomieTaskApp() {
        setDeleteTarget(null);
        setAlertMsg("已刪除該家事設定！");
 
-       sendConfigFlex('家事刪除', targetName, targetPrice, targetFreq, targetDate); 
+       sendConfigFlex('家事刪除', targetName, targetPrice, row2Label, row2Value, row3Label, row3Value); 
     }
   };
 
@@ -935,12 +901,15 @@ export default function RoomieTaskApp() {
   const allTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.date >= todayStr && t.date <= limitDate && (t.status === 'pending' || t.status === 'open'));
 
   const historyTasks = currentCycleTasks
-    .filter(t => validConfigIds.includes(t.configId) && (t.status === 'done' || t.status === 'failed'))
+    .filter(t => validConfigIds.includes(t.configId) && (t.status === 'done' || t.status === 'failed' || t.status === 'expired'))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 
   const hasPendingTodayTasks = myTasks.some(t => t.date <= todayStr);
   const hasOpenTasks = allTasks.some(t => t.status === 'open');
+
+  const scheduledConfigs = taskConfigs.filter(c => c.type !== 'onetime');
+  const onetimeConfigs = taskConfigs.filter(c => c.type === 'onetime');
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#28C8C8]"/></div>;
 
@@ -1089,7 +1058,7 @@ export default function RoomieTaskApp() {
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
-                              {isPublic && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
+                              {isPublic && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-bold shrink-0">一次性</span>}
                             </div>
                             <div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div>
                           </div>
@@ -1113,6 +1082,7 @@ export default function RoomieTaskApp() {
                   </div> :
                   historyTasks.map(task => {
                     const isFailed = task.status === 'failed';
+                    const isExpired = task.status === 'expired';
                     const isPublic = !task.originalHolderId;
                     const holder = users.find(u => u.id === (task.currentHolderId || task.originalHolderId));
                     
@@ -1135,13 +1105,15 @@ export default function RoomieTaskApp() {
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
-                              {isPublic && <span className="text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
+                              {isPublic && <span className="text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-bold shrink-0">一次性</span>}
                             </div>
                             <div className="text-sm text-gray-500 font-bold mt-0.5">{task.date}</div>
                           </div>
                         </div>
                         <div className="flex gap-2 shrink-0 ml-3">
-                          {isFailed ? (
+                          {isExpired ? (
+                            <span className="text-xs text-gray-400 font-bold bg-white px-2 py-1 rounded">已過期</span>
+                          ) : isFailed ? (
                             isGuiltyUser ? (
                               <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">有做忘了按</button>
                             ) : (
@@ -1255,43 +1227,67 @@ export default function RoomieTaskApp() {
                 <h3 className="font-bold text-gray-800 text-lg">家事規則</h3>
                 <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增家事</button>
               </div>
-              <div className="space-y-3">
-                {taskConfigs.map(c => {
-                  const isPublic = !c.assigneeOrder || c.assigneeOrder.length === 0;
-                  const isOneTime = c.freq === 0 || c.freq === '0' || c.freq === '一次性';
-                  return (
+              
+              {scheduledConfigs.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-bold text-gray-500 ml-1">排程家事</h4>
+                  {scheduledConfigs.map(c => (
                     <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 border border-transparent hover:border-gray-200 rounded-xl transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl">{c.icon}</div>
                         <div>
-                          <div className="font-bold text-base text-gray-800 flex items-center gap-2">
-                            {c.name}
-                            {isPublic && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
-                          </div>
-                          <div className="text-sm text-gray-500 font-bold mt-0.5">
-                            <span className="text-[#28C8C8]">${c.price}</span> / {isOneTime ? '一次性' : c.freq}
-                          </div>
+                          <div className="font-bold text-base text-gray-800">{c.name}</div>
+                          <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-[#28C8C8]">${c.price}</span> / 每 {c.freq} 天</div>
                         </div>
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => { 
                            setEditingConfigId(c.id); 
-                           const freqNum = c.freq && typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '0') : (c.freq || 0);
                            setConfigForm({ 
-                             ...c, 
-                             freq: freqNum, 
-                             nextDate: c.nextDate || getTodayString(), 
-                             assigneeOrder: c.assigneeOrder || [],
-                             nextAssigneeId: c.nextAssigneeId
+                             type: 'scheduled',
+                             name: c.name, price: c.price || 0, freq: typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '7') : (c.freq || 7), 
+                             icon: c.icon, nextDate: c.nextDate || getTodayString(), 
+                             assigneeOrder: c.assigneeOrder || users.map(u => u.id),
+                             requiredPeople: 1, deadline: getTodayString()
                            }); 
                            setIsEditingConfig(true); 
                         }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
                         <button onClick={() => setDeleteTarget({ type: 'config', id: c.id })} className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-colors"><Trash2 size={18}/></button>
                       </div>
                     </div>
-                  )
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
+
+              {onetimeConfigs.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h4 className="text-sm font-bold text-gray-500 ml-1">一次性家事</h4>
+                  {onetimeConfigs.map(c => (
+                    <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 border border-transparent hover:border-gray-200 rounded-xl transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl opacity-80">{c.icon}</div>
+                        <div>
+                          <div className="font-bold text-base text-gray-800">{c.name}</div>
+                          <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-orange-500">${c.price}</span> / {c.requiredPeople || 1} 人</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => { 
+                           setEditingConfigId(c.id); 
+                           setConfigForm({ 
+                             type: 'onetime',
+                             name: c.name, price: c.price || 0, freq: 7, icon: c.icon, nextDate: getTodayString(), 
+                             assigneeOrder: [], requiredPeople: c.requiredPeople || 1, deadline: c.deadline || c.nextDate || getTodayString()
+                           }); 
+                           setIsEditingConfig(true); 
+                        }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
+                        <button onClick={() => setDeleteTarget({ type: 'config', id: c.id })} className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-colors"><Trash2 size={18}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
             </div>
           </div>
         )}
@@ -1448,6 +1444,11 @@ export default function RoomieTaskApp() {
               <h2 className="font-bold text-xl text-gray-800">{editingConfigId ? '編輯家事' : '新增家事'}</h2>
               <button onClick={() => setIsEditingConfig(false)} className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-full transition-colors"><X size={20}/></button>
             </div>
+
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              <button onClick={() => setConfigForm({...configForm, type: 'scheduled'})} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${configForm.type === 'scheduled' ? 'bg-white shadow-sm text-[#28C8C8]' : 'text-gray-500 hover:text-gray-700'}`}>排程家事</button>
+              <button onClick={() => setConfigForm({...configForm, type: 'onetime'})} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${configForm.type === 'onetime' ? 'bg-white shadow-sm text-[#28C8C8]' : 'text-gray-500 hover:text-gray-700'}`}>一次性家事</button>
+            </div>
             
             <div className="flex gap-3 relative">
               <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="w-16 h-14 bg-gray-50 rounded-2xl text-center text-3xl cursor-pointer hover:bg-gray-100 flex items-center justify-center border border-gray-200 transition-colors shrink-0">{configForm.icon}</div>
@@ -1467,38 +1468,53 @@ export default function RoomieTaskApp() {
             <div className="relative">
               <input type="number" id="task-price" name="taskPrice" value={configForm.price === 0 ? '' : configForm.price} onChange={e => setConfigForm({...configForm, price: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-10 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] transition-colors"/>
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">$</span>
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">元</span>
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">元 / 次</span>
             </div>
 
-            <div className="relative">
-              <input type="number" id="task-freq" name="taskFreq" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-14 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] text-left transition-colors"/>
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">每</span>
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">日一次</span>
-              <span className="block mt-1.5 ml-2 text-xs text-gray-400 font-bold">💡 填入 0 代表「一次性任務」</span>
-            </div>
+            {configForm.type === 'scheduled' ? (
+              <>
+                <div className="relative">
+                  <input type="number" id="task-freq" name="taskFreq" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-14 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] text-left transition-colors"/>
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">每</span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">天 1 次</span>
+                </div>
 
-            <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
-              <span className="text-sm font-bold text-gray-700 block text-center">設定排班順序</span>
-              <span className="block text-center text-xs text-orange-500 font-bold mb-2">若不選成員，即為「公共懸賞單」，賞金將由其他人平攤支付！</span>
-              <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-2 justify-center">
-                {users.map(u => {
-                  if (!u || !u.id) return null; 
-                  const idx = (configForm.assigneeOrder || []).indexOf(u.id);
-                  const isSelected = idx !== -1;
-                  return (
-                    <div key={u.id} onClick={() => toggleUserInOrder(u.id)} className={`relative flex-none w-14 h-14 rounded-full border-[3px] cursor-pointer transition-all ${isSelected ? 'border-[#28C8C8] ring-4 ring-[#28C8C8]/20 scale-105' : 'border-gray-200 grayscale opacity-50 hover:opacity-80'}`}>
-                      <img src={u.avatar} className="w-full h-full rounded-full object-cover"/>
-                      {isSelected && <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#28C8C8] text-white text-xs font-bold flex items-center justify-center rounded-full shadow-md z-10 border-2 border-white">{idx + 1}</div>}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+                <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <span className="text-sm font-bold text-gray-700 block text-center">設定排班順序</span>
+                  <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-2 justify-center">
+                    {users.map(u => {
+                      if (!u || !u.id) return null; 
+                      const idx = (configForm.assigneeOrder || []).indexOf(u.id);
+                      const isSelected = idx !== -1;
+                      return (
+                        <div key={u.id} onClick={() => toggleUserInOrder(u.id)} className={`relative flex-none w-14 h-14 rounded-full border-[3px] cursor-pointer transition-all ${isSelected ? 'border-[#28C8C8] ring-4 ring-[#28C8C8]/20 scale-105' : 'border-gray-200 grayscale opacity-50 hover:opacity-80'}`}>
+                          <img src={u.avatar} className="w-full h-full rounded-full object-cover"/>
+                          {isSelected && <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#28C8C8] text-white text-xs font-bold flex items-center justify-center rounded-full shadow-md z-10 border-2 border-white">{idx + 1}</div>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
 
-            <div className="space-y-2">
-                <label htmlFor="start-date" className="text-sm font-bold text-gray-600 ml-1">排班起始日</label>
-                <input type="date" id="start-date" name="startDate" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-14 px-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold outline-none focus:border-[#28C8C8] text-lg text-gray-700 transition-colors"/>
-            </div>
+                <div className="space-y-2">
+                    <label htmlFor="start-date" className="text-sm font-bold text-gray-600 ml-1">排班起始日</label>
+                    <input type="date" id="start-date" name="startDate" value={configForm.nextDate} onChange={e => setConfigForm({...configForm, nextDate:e.target.value})} className="w-full h-14 px-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold outline-none focus:border-[#28C8C8] text-lg text-gray-700 transition-colors"/>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="relative">
+                  <input type="number" id="task-req" name="taskReq" value={configForm.requiredPeople === 0 ? '' : configForm.requiredPeople} onChange={e => setConfigForm({...configForm, requiredPeople: e.target.value === '' ? 1 : Number(e.target.value)})} className="w-full h-14 px-4 pl-20 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] text-left transition-colors"/>
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">需要</span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">人</span>
+                </div>
+                
+                <div className="space-y-2">
+                    <label htmlFor="deadline" className="text-sm font-bold text-gray-600 ml-1">截止日期 (過期自動失效)</label>
+                    <input type="date" id="deadline" name="deadline" value={configForm.deadline} onChange={e => setConfigForm({...configForm, deadline:e.target.value})} className="w-full h-14 px-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold outline-none focus:border-[#28C8C8] text-lg text-gray-700 transition-colors"/>
+                </div>
+              </>
+            )}
 
             <button onClick={saveConfig} disabled={isSaving} className="w-full py-4 bg-[#28C8C8] hover:bg-[#20a0a0] text-white rounded-2xl font-bold text-xl shadow-xl shadow-[#28C8C8]/30 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2">{isSaving ? '儲存中...' : '儲存規則'}</button>
           </div>
