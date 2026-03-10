@@ -516,7 +516,7 @@ export default function RoomieTaskApp() {
       let freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : (cfg.freq || 7);
 
       let loopCount = 0;
-      while (nextDate <= limitDate && loopCount < 50) {
+      while (nextDate <= limitDate && loopCount < 100) {
         loopCount++;
         const tid = `task-${cfg.id}-${nextDate.replace(/-/g, '')}`;
         if (!data.tasks || !data.tasks[tid]) {
@@ -778,16 +778,12 @@ export default function RoomieTaskApp() {
       const id = editingConfigId || `cfg-${generateId()}`;
       const updates = {};
 
-      let earliestPendingDate = null;
       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
+      const allTasks = tasksSnap.exists() ? tasksSnap.val() : {};
+      
       if (tasksSnap.exists()) {
-          const allTasks = tasksSnap.val();
           const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done' && t.status !== 'failed' && t.status !== 'expired');
-          if (relatedTasks.length > 0) {
-              relatedTasks.sort((a,b) => a.date.localeCompare(b.date));
-              earliestPendingDate = relatedTasks[0].date;
-              relatedTasks.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
-          }
+          relatedTasks.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
       }
 
       if (isOneTime) {
@@ -799,32 +795,33 @@ export default function RoomieTaskApp() {
               };
           }
           updates[`groups/${groupId}/taskConfigs/${id}`] = {
-              ...configForm, id, freq: 0, nextDate: '9999-12-31'
+              ...configForm, id, freq: 0, nextDate: '9999-12-31', startDate: configForm.deadline
           };
       } else {
           let assigneeOrder = configForm.assigneeOrder || [];
           const isPublic = assigneeOrder.length === 0;
 
           let runningAssigneeId = assigneeOrder.length > 0 ? assigneeOrder[0] : null;
-          if (editingConfigId && configForm.nextAssigneeId && assigneeOrder.includes(configForm.nextAssigneeId)) {
-              runningAssigneeId = configForm.nextAssigneeId;
-          }
-          
-          let nextDate = (editingConfigId && earliestPendingDate) ? earliestPendingDate : (configForm.nextDate || getTodayString());
+          let nextDate = configForm.nextDate || getTodayString(); 
           const freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '7');
           const limitDate = addDays(getTodayString(), 45);
           let loopCount = 0;
 
-          while (nextDate <= limitDate && loopCount < 50) {
+          while (nextDate <= limitDate && loopCount < 400) {
               loopCount++;
               const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
-              updates[`groups/${groupId}/tasks/${tid}`] = {
-                  id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
-                  date: nextDate, 
-                  status: isPublic ? 'open' : 'pending', 
-                  currentHolderId: isPublic ? null : runningAssigneeId, 
-                  originalHolderId: isPublic ? null : runningAssigneeId
-              };
+              
+              const existingTask = allTasks[tid];
+              if (!existingTask || (existingTask.status === 'pending' || existingTask.status === 'open')) {
+                  updates[`groups/${groupId}/tasks/${tid}`] = {
+                      id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
+                      date: nextDate, 
+                      status: isPublic ? 'open' : 'pending', 
+                      currentHolderId: isPublic ? null : runningAssigneeId, 
+                      originalHolderId: isPublic ? null : runningAssigneeId
+                  };
+              }
+
               if (!isPublic) {
                   const currIdx = assigneeOrder.indexOf(runningAssigneeId);
                   const nextIdx = (currIdx + 1) % assigneeOrder.length;
@@ -833,7 +830,7 @@ export default function RoomieTaskApp() {
               nextDate = addDays(nextDate, freqNum);
           }
           updates[`groups/${groupId}/taskConfigs/${id}`] = {
-              ...configForm, id, freq: freqNum, nextAssigneeId: runningAssigneeId, nextDate: nextDate 
+              ...configForm, id, freq: freqNum, nextAssigneeId: runningAssigneeId, nextDate: nextDate, startDate: configForm.nextDate 
           };
       }
 
@@ -946,7 +943,6 @@ export default function RoomieTaskApp() {
   const limitDate = addDays(todayStr, 45);
   const validConfigIds = taskConfigs.map(c => c.id);
 
-  // 🌟 修改：今日待辦只顯示今天以前（含今天）的任務
   const myTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.currentHolderId === currentUser?.id && t.status === 'pending' && t.date <= todayStr);
   
   const allTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.date >= todayStr && t.date <= limitDate && (t.status === 'pending' || t.status === 'open'));
@@ -1047,7 +1043,6 @@ export default function RoomieTaskApp() {
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
-                {/* 🌟 修改標籤名稱 */}
                 <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex justify-center items-center ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>
                   <div className="relative">
                     今日待辦
@@ -1067,10 +1062,16 @@ export default function RoomieTaskApp() {
             {rosterTab === 'mine' && (
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
-                  <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-gray-500 text-base font-bold mb-4">太棒了！今天沒有您的待辦家事 🎉</p>
-                    <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
-                  </div> :
+                  (taskConfigs.length > 0 ? (
+                    <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                      <p className="text-gray-500 text-base font-bold">太棒了！今天沒有您的待辦家事 🎉</p>
+                    </div>
+                  ) : (
+                    <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
+                      <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
+                    </div>
+                  )) :
                   myTasks.slice(0, myTasksLimit).map(task => {
                     const holder = users.find(u => u.id === task.currentHolderId);
                     return (
@@ -1306,9 +1307,9 @@ export default function RoomieTaskApp() {
                              setConfigForm({ 
                                type: 'scheduled',
                                name: c.name, price: c.price || 0, freq: freqNum, 
-                               icon: c.icon, nextDate: c.nextDate || getTodayString(), 
+                               icon: c.icon, nextDate: c.startDate || c.nextDate || getTodayString(), 
                                assigneeOrder: c.assigneeOrder || users.map(u => u.id),
-                               requiredPeople: 1, deadline: getTodayString()
+                               requiredPeople: 1, deadline: c.startDate || c.nextDate || getTodayString()
                              }); 
                              setIsEditingConfig(true); 
                           }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
@@ -1338,7 +1339,7 @@ export default function RoomieTaskApp() {
                            setConfigForm({ 
                              type: 'onetime',
                              name: c.name, price: c.price || 0, freq: 7, icon: c.icon, nextDate: getTodayString(), 
-                             assigneeOrder: [], requiredPeople: c.requiredPeople || 1, deadline: c.deadline || c.nextDate || getTodayString()
+                             assigneeOrder: [], requiredPeople: c.requiredPeople || 1, deadline: c.startDate || c.deadline || c.nextDate || getTodayString()
                            }); 
                            setIsEditingConfig(true); 
                         }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
