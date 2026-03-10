@@ -184,7 +184,7 @@ export default function RoomieTaskApp() {
       "body": {
         "type": "box", "layout": "vertical",
         "contents": [
-          { "type": "text", "text": "結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
+          { "type": "text", "text": "帳務結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
           { "type": "text", "text": `${fromName} 給 ${toName}`, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
           { "type": "separator", "margin": "xxl" },
           { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
@@ -644,9 +644,12 @@ export default function RoomieTaskApp() {
 
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'done';
     
+    const cfg = taskConfigs.find(c => c.id === task.configId);
+    const typeName = cfg?.type === 'onetime' ? '一次性' : '排程';
+
     const logId = Date.now();
     updates[`groups/${groupId}/logs/${logId}`] = { 
-        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並標記完成`, type: 'info', time: new Date().toLocaleTimeString() 
+        id: logId, msg: `${currentUser.name} 補按了${typeName}家事「${task.name}」，已退還罰款並重新結算`, type: 'info', time: new Date().toLocaleTimeString() 
     };
 
     await update(ref(db), updates);
@@ -661,6 +664,8 @@ export default function RoomieTaskApp() {
     
     const price = task.price || 0;
     const isPublic = !task.originalHolderId;
+    const cfg = taskConfigs.find(c => c.id === task.configId);
+    const typeName = cfg?.type === 'onetime' ? '一次性' : '排程';
 
     if (isPublic) {
         const otherUsers = users.filter(u => u.id !== currentUser.id);
@@ -676,7 +681,7 @@ export default function RoomieTaskApp() {
             });
         }
         const logId = Date.now();
-        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了懸賞「${task.name}」，由其他人平攤賞金`, type: 'success', time: new Date().toLocaleTimeString() };
+        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了${typeName}家事「${task.name}」，由其他人平攤賞金`, type: 'success', time: new Date().toLocaleTimeString() };
     } else if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
         const originalUser = users.find(u => u.id === task.originalHolderId);
         const myUser = users.find(u => u.id === currentUser.id);
@@ -685,12 +690,12 @@ export default function RoomieTaskApp() {
             updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myUser.balance + price;
             const logId = Date.now();
             updates[`groups/${groupId}/logs/${logId}`] = { 
-                id: logId, msg: `${currentUser.name} 完成了 ${task.name} (由 ${originalUser.name} 支付)`, type: 'success', time: new Date().toLocaleTimeString() 
+                id: logId, msg: `${currentUser.name} 完成了${typeName}家事「${task.name}」 (由 ${originalUser.name} 支付)`, type: 'success', time: new Date().toLocaleTimeString() 
             };
         }
     } else {
         const logId = Date.now();
-        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
+        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了${typeName}家事「${task.name}」`, type: 'success', time: new Date().toLocaleTimeString() };
     }
     
     await update(ref(db), updates);
@@ -698,16 +703,22 @@ export default function RoomieTaskApp() {
   };
   
   const releaseTask = async (task) => {
+    const cfg = taskConfigs.find(c => c.id === task.configId);
+    const typeName = cfg?.type === 'onetime' ? '一次性' : '排程';
+
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
     const logId = Date.now();
-    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
+    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出了${typeName}家事「${task.name}」`, type: 'warning', time: new Date().toLocaleTimeString() });
     sendTaskFlex('家事釋出', task.date, task.name, task.price); 
   };
 
   const claimTask = async (task) => {
+    const cfg = taskConfigs.find(c => c.id === task.configId);
+    const typeName = cfg?.type === 'onetime' ? '一次性' : '排程';
+
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
-    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
+    await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了${typeName}家事「${task.name}」`, type: 'info', time: new Date().toLocaleTimeString() });
     sendTaskFlex('家事接單', task.date, task.name, task.price); 
   };
 
@@ -810,6 +821,12 @@ export default function RoomieTaskApp() {
       };
 
       await update(ref(db), updates);
+
+      // 🌟 立即觸發過期判定機制，讓剛建立的過去任務自動轉為逾期/失效
+      const freshSnap = await get(ref(db, `groups/${groupId}`));
+      if (freshSnap.exists()) {
+          await checkAndApplyPenalties(groupId, freshSnap.val());
+      }
 
       setIsEditingConfig(false);
       setAlertMsg("家事設定已更新！");
@@ -921,7 +938,7 @@ export default function RoomieTaskApp() {
   const scheduledConfigs = taskConfigs.filter(c => c.type !== 'onetime');
   const onetimeConfigs = taskConfigs.filter(c => c.type === 'onetime');
 
-  // 小工具：用來渲染任務卡片的名稱與標籤
+  // 小工具：用來渲染任務卡片的名稱與標籤 (固定寬度42px)
   const renderTaskName = (task) => {
     const cfg = taskConfigs.find(c => c.id === task.configId);
     const isOneTime = cfg?.type === 'onetime';
@@ -929,7 +946,7 @@ export default function RoomieTaskApp() {
     const typeTagColor = isOneTime ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600';
     return (
       <div className="flex items-center gap-1.5 mb-0.5">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${typeTagColor}`}>{typeTag}</span>
+        <span className={`text-[10px] w-[42px] text-center py-0.5 rounded font-bold shrink-0 ${typeTagColor}`}>{typeTag}</span>
         <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
       </div>
     );
@@ -1128,7 +1145,7 @@ export default function RoomieTaskApp() {
                         </div>
                         <div className="flex gap-2 shrink-0 ml-3">
                           {isExpired ? (
-                            <span className="text-xs text-gray-400 font-bold bg-white px-2 py-1 rounded">已過期</span>
+                            <span className="text-xs text-gray-400 font-bold bg-white px-2 py-1 border border-gray-200 rounded">已過期</span>
                           ) : isFailed ? (
                             isGuiltyUser ? (
                               <button onClick={() => setTaskActionConfirm({ action: 'revert', task })} className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">補按</button>
@@ -1255,7 +1272,7 @@ export default function RoomieTaskApp() {
                           <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl">{c.icon}</div>
                           <div>
                             <div className="font-bold text-base text-gray-800">{c.name}</div>
-                            <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-[#28C8C8]">${c.price}</span> / 每 {freqDisplay} 天</div>
+                            <div className="text-sm text-gray-500 font-bold mt-0.5">每 {freqDisplay} 天/次，<span className="text-[#28C8C8] ml-1">${c.price}</span> /次</div>
                           </div>
                         </div>
                         <div className="flex gap-2">
@@ -1288,7 +1305,7 @@ export default function RoomieTaskApp() {
                         <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl opacity-80">{c.icon}</div>
                         <div>
                           <div className="font-bold text-base text-gray-800">{c.name}</div>
-                          <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-orange-500">${c.price}</span> / {c.requiredPeople || 1} 人</div>
+                          <div className="text-sm text-gray-500 font-bold mt-0.5">需求 {c.requiredPeople || 1} 人，<span className="text-orange-500 ml-1">${c.price}</span> /次</div>
                         </div>
                       </div>
                       <div className="flex gap-2">
