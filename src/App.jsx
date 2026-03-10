@@ -676,7 +676,7 @@ export default function RoomieTaskApp() {
   };
 
   const completeTask = async (task) => {
-    if (task.date > getTodayString()) { setAlertMsg("只能完成今天以前的任務喔！"); return; }
+    if (task.date > getTodayString()) { setAlertMsg("未來的任務，要當天才能點擊完成喔！"); return; }
     const updates = {};
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'done';
     
@@ -778,12 +778,16 @@ export default function RoomieTaskApp() {
       const id = editingConfigId || `cfg-${generateId()}`;
       const updates = {};
 
+      let earliestPendingDate = null;
       const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
-      const allTasks = tasksSnap.exists() ? tasksSnap.val() : {};
-      
       if (tasksSnap.exists()) {
+          const allTasks = tasksSnap.val();
           const relatedTasks = Object.values(allTasks).filter(t => t.configId === id && t.status !== 'done' && t.status !== 'failed' && t.status !== 'expired');
-          relatedTasks.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
+          if (relatedTasks.length > 0) {
+              relatedTasks.sort((a,b) => a.date.localeCompare(b.date));
+              earliestPendingDate = relatedTasks[0].date;
+              relatedTasks.forEach(t => { updates[`groups/${groupId}/tasks/${t.id}`] = null; });
+          }
       }
 
       if (isOneTime) {
@@ -1090,7 +1094,7 @@ export default function RoomieTaskApp() {
                         <div className="flex gap-2 shrink-0 ml-3">
                           <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors whitespace-nowrap">沒空</button>
                           <button onClick={() => {
-                            if (task.date > getTodayString()) setAlertMsg("只能完成今天以前的任務喔！");
+                            if (task.date > getTodayString()) setAlertMsg("未來的任務，要當天才能點擊完成喔！");
                             else setTaskActionConfirm({ action: 'complete', task });
                           }} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 whitespace-nowrap ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
                         </div>
@@ -1111,6 +1115,7 @@ export default function RoomieTaskApp() {
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
                     const isOpen = task.status === 'open';
+                    const isMyTask = !isOpen && task.currentHolderId === currentUser?.id;
                     const holder = users.find(u => u.id === task.currentHolderId);
                     return (
                       <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isOpen ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100'}`}>
@@ -1127,6 +1132,15 @@ export default function RoomieTaskApp() {
                         </div>
                         <div className="flex gap-2 shrink-0 ml-3">
                           {isOpen && <button onClick={() => setTaskActionConfirm({ action: 'claim', task })} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-red-200 active:scale-95 transition-all whitespace-nowrap">接單</button>}
+                          {isMyTask && (
+                            <>
+                              <button onClick={() => setTaskActionConfirm({ action: 'release', task })} className="bg-red-50 hover:bg-red-100 text-red-500 px-4 py-2 rounded-xl text-sm font-bold transition-colors whitespace-nowrap">沒空</button>
+                              <button onClick={() => {
+                                if (task.date > getTodayString()) setAlertMsg("未來的任務，要當天才能點擊完成喔！");
+                                else setTaskActionConfirm({ action: 'complete', task });
+                              }} className={`text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-transform active:scale-95 whitespace-nowrap ${task.date > getTodayString() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-[#28C8C8] shadow-[#28C8C8]/30 hover:bg-[#20a0a0]'}`}>完成</button>
+                            </>
+                          )}
                         </div>
                       </div>
                     )
