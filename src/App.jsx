@@ -108,124 +108,100 @@ export default function RoomieTaskApp() {
     }
   };
 
-  // 🌟 新增/編輯/刪除家事 Flex (新版設計)
-  const sendConfigFlex = (action, taskName, price, freq, startDate) => {
+  // 小工具：建立橫向的細節欄位 (左邊灰字、右邊黑字)
+  const createFlexRow = (label, value) => ({
+    "type": "box", "layout": "horizontal", "contents": [
+      { "type": "text", "text": label, "size": "md", "color": "#555555", "flex": 0 },
+      { "type": "text", "text": value, "size": "md", "color": "#111111", "align": "end" }
+    ]
+  });
+
+  // 🌟 新增/編輯/刪除家事 Flex (最終極簡版)
+  const sendConfigFlex = (actionText, taskName, price, freq, startDate) => {
     const flexMsg = {
       "type": "bubble",
       "body": {
-        "type": "box",
-        "layout": "vertical",
+        "type": "box", "layout": "vertical",
         "contents": [
-          { "type": "text", "text": action, "weight": "bold", "color": "#28c8c8", "size": "md" },
+          { "type": "text", "text": actionText, "weight": "bold", "color": "#28c8c8", "size": "md" },
           { "type": "text", "text": taskName, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
           { "type": "separator", "margin": "xxl" },
-          {
-            "type": "box",
-            "layout": "vertical",
-            "margin": "xxl",
-            "spacing": "sm",
+          { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
             "contents": [
-              {
-                "type": "box", "layout": "horizontal", "contents": [
-                  { "type": "text", "text": "金額", "size": "sm", "color": "#555555", "flex": 0 },
-                  { "type": "text", "text": `$${price}/次`, "size": "sm", "color": "#111111", "align": "end" }
-                ]
-              },
-              {
-                "type": "box", "layout": "horizontal", "contents": [
-                  { "type": "text", "text": "頻率", "size": "sm", "color": "#555555", "flex": 0 },
-                  { "type": "text", "text": `1次/${freq}天`, "size": "sm", "color": "#111111", "align": "end" }
-                ]
-              },
-              {
-                "type": "box", "layout": "horizontal", "contents": [
-                  { "type": "text", "text": "排班起始日", "size": "sm", "color": "#555555", "flex": 0 },
-                  { "type": "text", "text": startDate, "size": "sm", "color": "#111111", "align": "end" }
-                ]
-              }
+              createFlexRow("金額", `$${price}/次`),
+              createFlexRow("頻率", `1次/${freq}天`),
+              createFlexRow("排班起始日", startDate)
             ]
           }
         ]
       },
       "footer": {
-        "type": "box", "layout": "vertical", "contents": [
+        "type": "box", "layout": "vertical",
+        "contents": [
           { "type": "button", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } }
         ]
       },
       "styles": { "footer": { "separator": true } }
     };
-    sendFlexMessage(`${action}家事：${taskName}`, flexMsg);
+    sendFlexMessage(`${actionText}：${taskName}`, flexMsg);
   };
 
-  // 🌟 完成/釋出/接單/補登 Flex (新版設計)
-  const sendTaskFlex = (action, dateStr, taskName) => {
+  // 🌟 完成/釋出/接單/補登 Flex (最終極簡版)
+  const sendTaskFlex = (actionText, dateStr, taskName, price = null) => {
+    const details = [];
+    if (price !== null) {
+      details.push(createFlexRow("金額", `$${price}/次`));
+    }
+    details.push(createFlexRow("工作日期", dateStr));
+
     const flexMsg = {
       "type": "bubble",
       "body": {
-        "type": "box",
-        "layout": "vertical",
+        "type": "box", "layout": "vertical",
         "contents": [
-          { "type": "text", "text": action, "weight": "bold", "color": "#28c8c8", "size": "md" },
-          { "type": "box", "layout": "vertical", "contents": [
-              { "type": "text", "text": taskName, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true }
-            ]
-          },
+          { "type": "text", "text": actionText, "weight": "bold", "color": "#28c8c8", "size": "md" },
+          { "type": "text", "text": taskName, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
           { "type": "separator", "margin": "xxl" },
-          {
-            "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
-            "contents": [
-              {
-                "type": "box", "layout": "horizontal", "contents": [
-                  { "type": "text", "text": "工作日期", "size": "sm", "color": "#555555", "flex": 0 },
-                  { "type": "text", "text": dateStr, "size": "sm", "color": "#111111", "align": "end" }
-                ]
-              }
-            ]
-          }
+          { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm", "contents": details }
         ]
       },
       "footer": {
-        "type": "box", "layout": "vertical", "contents": [
+        "type": "box", "layout": "vertical",
+        "contents": [
           { "type": "button", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } }
         ]
       },
       "styles": { "footer": { "separator": true } }
     };
-    sendFlexMessage(`${action}家事：${taskName}`, flexMsg);
+    sendFlexMessage(`${actionText}：${taskName}`, flexMsg);
   };
 
-  // 🌟 帳務結清 Flex (新版設計)
+  // 🌟 帳務結清 Flex (最終極簡版)
   const sendSettleFlex = (fromName, toName, amount) => {
     const flexMsg = {
       "type": "bubble",
       "body": {
-        "type": "box",
-        "layout": "vertical",
+        "type": "box", "layout": "vertical",
         "contents": [
-          { "type": "text", "text": "結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
+          { "type": "text", "text": "帳務結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
           { "type": "text", "text": `${fromName} 給 ${toName}`, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
           { "type": "separator", "margin": "xxl" },
-          {
-            "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
+          { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
             "contents": [
-              {
-                "type": "box", "layout": "horizontal", "contents": [
-                  { "type": "text", "text": "金額", "size": "sm", "color": "#555555", "flex": 0 },
-                  { "type": "text", "text": `$${amount}`, "size": "sm", "color": "#111111", "align": "end" }
-                ]
-              }
+              createFlexRow("金額", `$${amount}`)
             ]
           }
         ]
       },
       "footer": {
-        "type": "box", "layout": "vertical", "contents": [
+        "type": "box", "layout": "vertical",
+        "contents": [
           { "type": "button", "action": { "type": "uri", "label": "查看", "uri": `https://liff.line.me/${LIFF_ID}?g=${groupId}` } }
         ]
       },
       "styles": { "footer": { "separator": true } }
     };
-    sendFlexMessage(`帳務結清：${fromName}給${toName} $${amount}`, flexMsg);
+    sendFlexMessage(`帳務結清：${fromName} 給 ${toName}`, flexMsg);
   };
 
   useEffect(() => {
@@ -658,7 +634,7 @@ export default function RoomieTaskApp() {
 
     await update(ref(db), updates);
     setAlertMsg("已成功退還扣款並標記完成！");
-    sendTaskFlex('補登', task.date, task.name);
+    sendTaskFlex('家事補登', task.date, task.name);
   };
 
   const completeTask = async (task) => {
@@ -681,21 +657,21 @@ export default function RoomieTaskApp() {
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
     await update(ref(db), updates);
-    sendTaskFlex('完成', task.date, task.name); 
+    sendTaskFlex('家事完成', task.date, task.name); 
   };
   
   const releaseTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
-    sendTaskFlex('釋出', task.date, task.name); 
+    sendTaskFlex('家事釋出', task.date, task.name, task.price); 
   };
 
   const claimTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
-    sendTaskFlex('接單', task.date, task.name); 
+    sendTaskFlex('家事接單', task.date, task.name, task.price); 
   };
 
   const toggleUserInOrder = (uid) => {
@@ -797,7 +773,7 @@ export default function RoomieTaskApp() {
       setIsEditingConfig(false);
       setAlertMsg("排班已更新！");
       
-      const flexActionText = editingConfigId ? '編輯' : '新增';
+      const flexActionText = editingConfigId ? '家事編輯' : '家事新增';
       sendConfigFlex(flexActionText, configForm.name, configForm.price, freqNum, nextDate);
 
     } catch (error) {
@@ -835,7 +811,7 @@ export default function RoomieTaskApp() {
        setDeleteTarget(null);
        setAlertMsg("已刪除該家事規則！");
 
-       sendConfigFlex('刪除', targetName, targetPrice, targetFreq, targetDate); 
+       sendConfigFlex('家事刪除', targetName, targetPrice, targetFreq, targetDate); 
     }
   };
 
