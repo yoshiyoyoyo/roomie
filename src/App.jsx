@@ -97,97 +97,6 @@ export default function RoomieTaskApp() {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // 日期格式化：將 YYYY-MM-DD 轉為 M/D (例如：3/9)
-  const formatTaskDate = (dStr) => {
-    if (!dStr) return '';
-    const parts = dStr.split('-');
-    if (parts.length === 3) return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
-    return dStr;
-  };
-
-  // 🌟 修改：套用新的 hecto size 與置中設計的 Flex Message
-  const sendLiffFlexMessage = async (title, color, dateStr, taskName, subtitle) => {
-    try {
-      if (liff.isInClient()) {
-        const uri = `https://liff.line.me/${LIFF_ID}?g=${groupId}`;
-        
-        // 判斷是否為金額結清 (結清時 taskName 為 null，且 contents 要為空陣列)
-        const taskNameBox = taskName 
-          ? {
-              type: "box",
-              layout: "baseline",
-              spacing: "sm",
-              contents: [{ type: "text", text: taskName, color: "#3C3C3C", size: "xl", flex: 1, weight: "bold", align: "center" }]
-            }
-          : {
-              type: "box",
-              layout: "baseline",
-              spacing: "sm",
-              contents: []
-            };
-
-        const flexMsg = {
-          type: "flex",
-          altText: `家事交易所：${title}`,
-          contents: {
-            type: "bubble",
-            size: "hecto",
-            body: {
-              type: "box",
-              layout: "vertical",
-              contents: [
-                {
-                  type: "box",
-                  layout: "baseline",
-                  margin: "md",
-                  contents: [
-                    { type: "text", text: title, color: color, size: "xl", flex: 1, margin: "none", weight: "bold", align: "center" }
-                  ]
-                },
-                {
-                  type: "box",
-                  layout: "vertical",
-                  margin: "lg",
-                  spacing: "sm",
-                  contents: [
-                    { type: "text", text: dateStr, color: "#aaaaaa", align: "center", size: "sm" },
-                    taskNameBox,
-                    {
-                      type: "box",
-                      layout: "baseline",
-                      spacing: "sm",
-                      contents: [
-                        { type: "text", text: subtitle, color: "#aaaaaa", size: "sm", flex: 1, align: "center" }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            footer: {
-              type: "box",
-              layout: "vertical",
-              spacing: "sm",
-              contents: [
-                {
-                  type: "button",
-                  style: "link",
-                  height: "sm",
-                  action: { type: "uri", label: "查看", uri: uri }
-                }
-              ],
-              flex: 0
-            }
-          }
-        };
-        await liff.sendMessages([flexMsg]);
-      }
-    } catch (e) {
-      console.error("發送 LINE Flex 訊息失敗:", e);
-    }
-  };
-
-  // 保留純文字發送函式（給新增家事規則使用）
   const sendLiffMessage = async (msg) => {
     try {
       if (liff.isInClient()) {
@@ -628,8 +537,7 @@ export default function RoomieTaskApp() {
 
     await update(ref(db), updates);
     setAlertMsg("已成功退還扣款並標記完成！");
-    // 🌟 Flex 推播 (使用任務原本的日期)
-    sendLiffFlexMessage('有做忘了按', '#FFAF60', formatTaskDate(task.date), task.name, '失禮媽誰我忘了按');
+    sendLiffMessage(`🏠 家事交易所通知\n我補按了「${task.name}」，已退還罰款並重新結算賞金！`);
   };
 
   const completeTask = async (task) => {
@@ -652,24 +560,21 @@ export default function RoomieTaskApp() {
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
     await update(ref(db), updates);
-    // 🌟 Flex 推播 (使用任務原本的日期)
-    sendLiffFlexMessage('完成', '#00DB00', formatTaskDate(task.date), task.name, '休想賺走我的錢');
+    sendLiffMessage(`🏠 家事交易所通知\n我剛剛完成了「${task.name}」！`);
   };
   
   const releaseTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'open', currentHolderId: null, originalHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 釋出 ${task.name}`, type: 'warning', time: new Date().toLocaleTimeString() });
-    // 🌟 Flex 推播 (使用任務原本的日期)
-    sendLiffFlexMessage('沒空', '#FF7575', formatTaskDate(task.date), task.name, '誰來救救我~');
+    sendLiffMessage(`🏠 家事交易所通知\n我釋出了「${task.name}」，等待好心人接單！`);
   };
 
   const claimTask = async (task) => {
     await update(ref(db, `groups/${groupId}/tasks/${task.id}`), { status: 'pending', currentHolderId: currentUser.id });
     const logId = Date.now();
     await set(ref(db, `groups/${groupId}/logs/${logId}`), { id: logId, msg: `${currentUser.name} 接手了 ${task.name}`, type: 'info', time: new Date().toLocaleTimeString() });
-    // 🌟 Flex 推播 (使用任務原本的日期)
-    sendLiffFlexMessage('接單', '#28C8C8', formatTaskDate(task.date), task.name, '你的錢我就賺走囉');
+    sendLiffMessage(`🏠 家事交易所通知\n我接手了「${task.name}」！`);
   };
 
   const toggleUserInOrder = (uid) => {
@@ -760,18 +665,17 @@ export default function RoomieTaskApp() {
       };
       updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
 
-      await update(ref(db), updates);
-      
       const logId = Date.now();
-      const actionMsg = editingConfigId ? `編輯了家事：${configForm.name}` : `新增了家事：${configForm.name}`;
-      await set(ref(db, `groups/${groupId}/logs/${logId}`), { 
-         id: logId, msg: `${currentUser.name} ${actionMsg}`, type: 'info', time: new Date().toLocaleTimeString() 
-      });
+      const actionType = editingConfigId ? '編輯' : '新增';
+      updates[`groups/${groupId}/logs/${logId}`] = { 
+         id: logId, msg: `${currentUser.name} ${actionType}了家事規則：「${configForm.name}」`, type: 'info', time: new Date().toLocaleTimeString() 
+      };
+
+      await update(ref(db), updates);
 
       setIsEditingConfig(false);
       setAlertMsg("排班已更新！");
-      // 新增規則還是使用純文字推播較為簡潔
-      sendLiffMessage(`🏠 家事交易所通知\n我剛${actionMsg}！`); 
+      sendLiffMessage(`🏠 家事交易所通知\n我剛剛${actionType}了家事規則：「${configForm.name}」！`); 
 
     } catch (error) {
       console.error(error);
@@ -783,6 +687,9 @@ export default function RoomieTaskApp() {
 
   const deleteConfigConfirm = async () => {
     if (deleteTarget && deleteTarget.type === 'config') {
+       const targetConfig = taskConfigs.find(c => c.id === deleteTarget.id);
+       const targetName = targetConfig ? targetConfig.name : '未知家事';
+
        const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
        const updates = {};
        if (tasksSnap.exists()) {
@@ -792,8 +699,16 @@ export default function RoomieTaskApp() {
            });
        }
        updates[`groups/${groupId}/taskConfigs/${deleteTarget.id}`] = null;
+
+       const logId = Date.now();
+       updates[`groups/${groupId}/logs/${logId}`] = { 
+          id: logId, msg: `${currentUser.name} 刪除了家事規則：「${targetName}」`, type: 'warning', time: new Date().toLocaleTimeString() 
+       };
+
        await update(ref(db), updates);
        setDeleteTarget(null);
+       setAlertMsg("已刪除該家事規則！");
+       sendLiffMessage(`🏠 家事交易所通知\n我剛剛刪除了家事規則：「${targetName}」！`); 
     }
   };
 
@@ -831,8 +746,7 @@ export default function RoomieTaskApp() {
     updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${tx.fromName} 支付了 $${tx.amount} 給 ${tx.toName} (已結清)`, type: 'info', time: new Date().toLocaleTimeString() };
     await update(ref(db), updates);
     setAlertMsg("結帳成功！");
-    // 🌟 Flex 推播 (使用今天的日期，無任務名稱)
-    sendLiffFlexMessage('金額結清', '#FFDC35', formatTaskDate(getTodayString()), null, '我們互不相欠了');
+    sendLiffMessage(`🏠 家事交易所通知\n我剛支付了 $${tx.amount} 給 ${tx.toName}，帳務已結清！`);
   };
 
   const todayStr = getTodayString();
