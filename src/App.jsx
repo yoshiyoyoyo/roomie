@@ -108,7 +108,6 @@ export default function RoomieTaskApp() {
     }
   };
 
-  // 小工具：建立橫向的細節欄位 (左邊灰字、右邊黑字)
   const createFlexRow = (label, value) => ({
     "type": "box", "layout": "horizontal", "contents": [
       { "type": "text", "text": label, "size": "md", "color": "#555555", "flex": 0 },
@@ -116,8 +115,8 @@ export default function RoomieTaskApp() {
     ]
   });
 
-  // 🌟 新增/編輯/刪除家事 Flex (最終極簡版)
   const sendConfigFlex = (actionText, taskName, price, freq, startDate) => {
+    const freqText = freq === 0 ? "一次性" : `1次/${freq}天`;
     const flexMsg = {
       "type": "bubble",
       "body": {
@@ -129,7 +128,7 @@ export default function RoomieTaskApp() {
           { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
             "contents": [
               createFlexRow("金額", `$${price}/次`),
-              createFlexRow("頻率", `1次/${freq}天`),
+              createFlexRow("頻率", freqText),
               createFlexRow("排班起始日", startDate)
             ]
           }
@@ -146,7 +145,6 @@ export default function RoomieTaskApp() {
     sendFlexMessage(`${actionText}：${taskName}`, flexMsg);
   };
 
-  // 🌟 完成/釋出/接單/補登 Flex (最終極簡版)
   const sendTaskFlex = (actionText, dateStr, taskName, price = null) => {
     const details = [];
     if (price !== null) {
@@ -160,7 +158,10 @@ export default function RoomieTaskApp() {
         "type": "box", "layout": "vertical",
         "contents": [
           { "type": "text", "text": actionText, "weight": "bold", "color": "#28c8c8", "size": "md" },
-          { "type": "text", "text": taskName, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
+          { "type": "box", "layout": "vertical", "contents": [
+              { "type": "text", "text": taskName, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true }
+            ]
+          },
           { "type": "separator", "margin": "xxl" },
           { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm", "contents": details }
         ]
@@ -176,14 +177,13 @@ export default function RoomieTaskApp() {
     sendFlexMessage(`${actionText}：${taskName}`, flexMsg);
   };
 
-  // 🌟 帳務結清 Flex (最終極簡版)
   const sendSettleFlex = (fromName, toName, amount) => {
     const flexMsg = {
       "type": "bubble",
       "body": {
         "type": "box", "layout": "vertical",
         "contents": [
-          { "type": "text", "text": "帳務結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
+          { "type": "text", "text": "結清", "weight": "bold", "color": "#28c8c8", "size": "md" },
           { "type": "text", "text": `${fromName} 給 ${toName}`, "weight": "bold", "size": "xxl", "margin": "md", "wrap": true },
           { "type": "separator", "margin": "xxl" },
           { "type": "box", "layout": "vertical", "margin": "xxl", "spacing": "sm",
@@ -424,6 +424,7 @@ export default function RoomieTaskApp() {
     allUsers.forEach(u => tempBalances[u.id] = u.balance || 0);
 
     Object.values(data.tasks).forEach(task => {
+      // 🌟 修改：若是公共任務 (無 originalHolderId) 且狀態為 open，不進行懲罰
       if (task.date < today && task.status !== 'done' && task.status !== 'failed') {
         const price = task.price || 0;
         let guiltyUserId = task.currentHolderId;
@@ -483,29 +484,49 @@ export default function RoomieTaskApp() {
 
     configs.forEach(cfg => {
       let nextDate = cfg.nextDate || getTodayString();
-      let order = (cfg.assigneeOrder && cfg.assigneeOrder.length > 0) ? cfg.assigneeOrder : allUserIds;
-      order = order.filter(uid => allUserIds.includes(uid));
-      if (order.length === 0) order = allUserIds;
+      if (nextDate === '9999-12-31') return; // 一次性任務已生成完畢，跳過
+
+      let isPublic = (!cfg.assigneeOrder || cfg.assigneeOrder.length === 0);
+      let order = isPublic ? allUserIds : cfg.assigneeOrder.filter(uid => allUserIds.includes(uid));
+      if (order.length === 0) order = allUserIds; // 容錯機制
 
       let runningAssigneeId = cfg.nextAssigneeId;
       if (!runningAssigneeId || !order.includes(runningAssigneeId)) runningAssigneeId = order[0];
 
+      let freqNum = typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '0') : (cfg.freq || 0);
+      let isOneTime = freqNum === 0;
       let loopCount = 0;
+
       while (nextDate <= limitDate && loopCount < 50) {
         loopCount++;
         const tid = `task-${cfg.id}-${nextDate.replace(/-/g, '')}`;
         if (!data.tasks || !data.tasks[tid]) {
             updates[`groups/${gId}/tasks/${tid}`] = {
               id: tid, configId: cfg.id, name: cfg.name, price: cfg.price, icon: cfg.icon,
-              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+              date: nextDate, 
+              status: isPublic ? 'open' : 'pending',
+              currentHolderId: isPublic ? null : runningAssigneeId,
+              originalHolderId: isPublic ? null : runningAssigneeId
             };
+            hasUpdates = true;
         }
-        const currIdx = order.indexOf(runningAssigneeId);
-        const nextIdx = (currIdx + 1) % order.length;
-        runningAssigneeId = order[nextIdx];
-        nextDate = addDays(nextDate, typeof cfg.freq === 'string' ? parseInt(cfg.freq.match(/\d+/)?.[0] || '7') : cfg.freq);
+
+        if (isOneTime) {
+            nextDate = '9999-12-31'; 
+            updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
+            hasUpdates = true;
+            break;
+        }
+
+        if (!isPublic) {
+            const currIdx = order.indexOf(runningAssigneeId);
+            const nextIdx = (currIdx + 1) % order.length;
+            runningAssigneeId = order[nextIdx];
+            updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
+        }
+        
+        nextDate = addDays(nextDate, freqNum);
         updates[`groups/${gId}/taskConfigs/${cfg.id}/nextDate`] = nextDate;
-        updates[`groups/${gId}/taskConfigs/${cfg.id}/nextAssigneeId`] = runningAssigneeId; 
         hasUpdates = true;
       }
     });
@@ -607,6 +628,7 @@ export default function RoomieTaskApp() {
     const tempBalances = {};
     users.forEach(u => tempBalances[u.id] = u.balance || 0);
 
+    // 1. 退還所有逾期罰款 (不管是公共還是普通，有扣款就全退)
     if (guiltyUserId && tempBalances[guiltyUserId] !== undefined) {
         tempBalances[guiltyUserId] += totalPenalty;
         users.forEach(u => {
@@ -616,9 +638,30 @@ export default function RoomieTaskApp() {
         });
     }
 
-    if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
-        tempBalances[task.originalHolderId] -= price;
-        tempBalances[guiltyUserId] += price;
+    // 2. 發放完成賞金
+    const isPublic = !task.originalHolderId;
+    if (isPublic) {
+        // 公共懸賞均攤扣款
+        const otherUsers = users.filter(u => u.id !== guiltyUserId);
+        if (otherUsers.length > 0) {
+            const baseSplit = Math.floor(price / otherUsers.length);
+            let remainder = price % otherUsers.length;
+            
+            tempBalances[guiltyUserId] += price;
+            otherUsers.forEach(u => {
+                let deduct = baseSplit + (remainder > 0 ? 1 : 0);
+                remainder--;
+                tempBalances[u.id] -= deduct;
+            });
+        } else {
+            tempBalances[guiltyUserId] += price;
+        }
+    } else {
+        // 普通代做扣款
+        if (task.originalHolderId && task.originalHolderId !== guiltyUserId && tempBalances[task.originalHolderId] !== undefined) {
+            tempBalances[task.originalHolderId] -= price;
+            tempBalances[guiltyUserId] += price;
+        }
     }
 
     Object.keys(tempBalances).forEach(uid => {
@@ -629,7 +672,7 @@ export default function RoomieTaskApp() {
     
     const logId = Date.now();
     updates[`groups/${groupId}/logs/${logId}`] = { 
-        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並標記完成`, type: 'info', time: new Date().toLocaleTimeString() 
+        id: logId, msg: `${currentUser.name} 補按了「${task.name}」，已退還罰款並重新結算`, type: 'info', time: new Date().toLocaleTimeString() 
     };
 
     await update(ref(db), updates);
@@ -641,21 +684,44 @@ export default function RoomieTaskApp() {
     if (task.date > getTodayString()) { setAlertMsg("只能完成今天以前的任務喔！"); return; }
     const updates = {};
     updates[`groups/${groupId}/tasks/${task.id}/status`] = 'done';
-    if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
+    
+    const price = task.price || 0;
+    const isPublic = !task.originalHolderId;
+
+    if (isPublic) {
+        // 🌟 公共懸賞：其他人均攤扣款
+        const otherUsers = users.filter(u => u.id !== currentUser.id);
+        if (otherUsers.length > 0) {
+            const baseSplit = Math.floor(price / otherUsers.length);
+            let remainder = price % otherUsers.length;
+            
+            updates[`groups/${groupId}/users/${currentUser.id}/balance`] = (users.find(u => u.id === currentUser.id)?.balance || 0) + price;
+            otherUsers.forEach(u => {
+                let deduct = baseSplit + (remainder > 0 ? 1 : 0);
+                remainder--;
+                updates[`groups/${groupId}/users/${u.id}/balance`] = (u.balance || 0) - deduct;
+            });
+        }
+        const logId = Date.now();
+        updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了公共懸賞「${task.name}」，由其他人平攤賞金`, type: 'success', time: new Date().toLocaleTimeString() };
+    } else if (task.originalHolderId && task.originalHolderId !== currentUser.id) {
+        // 🌟 普通任務代做
         const originalUser = users.find(u => u.id === task.originalHolderId);
         const myUser = users.find(u => u.id === currentUser.id);
         if (originalUser && myUser) {
-            updates[`groups/${groupId}/users/${task.originalHolderId}/balance`] = originalUser.balance - (task.price || 0);
-            updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myUser.balance + (task.price || 0);
+            updates[`groups/${groupId}/users/${task.originalHolderId}/balance`] = originalUser.balance - price;
+            updates[`groups/${groupId}/users/${currentUser.id}/balance`] = myUser.balance + price;
             const logId = Date.now();
             updates[`groups/${groupId}/logs/${logId}`] = { 
                 id: logId, msg: `${currentUser.name} 完成了 ${task.name} (由 ${originalUser.name} 支付)`, type: 'success', time: new Date().toLocaleTimeString() 
             };
         }
     } else {
+        // 🌟 自己做自己的
         const logId = Date.now();
         updates[`groups/${groupId}/logs/${logId}`] = { id: logId, msg: `${currentUser.name} 完成了 ${task.name}`, type: 'success', time: new Date().toLocaleTimeString() };
     }
+    
     await update(ref(db), updates);
     sendTaskFlex('家事完成', task.date, task.name); 
   };
@@ -687,7 +753,7 @@ export default function RoomieTaskApp() {
     setEditingConfigId(null);
     setConfigForm({ 
       name: '', price: 30, freq: 7, icon: '🧹', 
-      assigneeOrder: users.map(u => u.id), 
+      assigneeOrder: [], // 預設留空為公共懸賞
       nextDate: getTodayString() 
     });
     setFormError('');
@@ -700,16 +766,15 @@ export default function RoomieTaskApp() {
 
     try {
       if (!configForm.name.trim()) { alert("請輸入家事名稱！"); setIsSaving(false); return; }
-      if (configForm.price <= 0 || configForm.freq <= 0) { alert("金額與頻率必須大於 0！"); setIsSaving(false); return; }
+      if (configForm.price < 0 || configForm.freq < 0) { alert("金額與頻率不可為負數！"); setIsSaving(false); return; }
       
-      let assigneeOrder = configForm.assigneeOrder;
-      if (!assigneeOrder || assigneeOrder.length === 0) {
-        assigneeOrder = users.map(u => u.id);
-      }
+      let assigneeOrder = configForm.assigneeOrder || [];
+      const isPublic = assigneeOrder.length === 0;
 
       const id = editingConfigId || `cfg-${generateId()}`;
-      const freqStr = typeof configForm.freq === 'string' ? configForm.freq : `每 ${configForm.freq} 天`;
-      const freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '7');
+      let freqNum = parseInt(String(configForm.freq).match(/\d+/)?.[0] || '0');
+      const isOneTime = freqNum === 0;
+      const freqStr = isOneTime ? '一次性' : `每 ${freqNum} 天`;
 
       const updates = {};
 
@@ -735,7 +800,7 @@ export default function RoomieTaskApp() {
           nextDate = configForm.nextDate || getTodayString();
       }
 
-      let runningAssigneeId = assigneeOrder[0];
+      let runningAssigneeId = assigneeOrder.length > 0 ? assigneeOrder[0] : null;
       if (editingConfigId && configForm.nextAssigneeId && assigneeOrder.includes(configForm.nextAssigneeId)) {
           runningAssigneeId = configForm.nextAssigneeId;
       }
@@ -748,11 +813,20 @@ export default function RoomieTaskApp() {
           const tid = `task-${id}-${nextDate.replace(/-/g, '')}`;
           updates[`groups/${groupId}/tasks/${tid}`] = {
               id: tid, configId: id, name: configForm.name, price: configForm.price, icon: configForm.icon,
-              date: nextDate, status: 'pending', currentHolderId: runningAssigneeId
+              date: nextDate, 
+              status: isPublic ? 'open' : 'pending',
+              currentHolderId: isPublic ? null : runningAssigneeId,
+              originalHolderId: isPublic ? null : runningAssigneeId
           };
-          const currIdx = assigneeOrder.indexOf(runningAssigneeId);
-          const nextIdx = (currIdx + 1) % assigneeOrder.length;
-          runningAssigneeId = assigneeOrder[nextIdx];
+          if (isOneTime) {
+              nextDate = '9999-12-31';
+              break;
+          }
+          if (!isPublic) {
+              const currIdx = assigneeOrder.indexOf(runningAssigneeId);
+              const nextIdx = (currIdx + 1) % assigneeOrder.length;
+              runningAssigneeId = assigneeOrder[nextIdx];
+          }
           nextDate = addDays(nextDate, freqNum);
       }
 
@@ -765,16 +839,16 @@ export default function RoomieTaskApp() {
       const logId = Date.now();
       const actionTypeText = editingConfigId ? '編輯' : '新增';
       updates[`groups/${groupId}/logs/${logId}`] = { 
-         id: logId, msg: `${currentUser.name} ${actionTypeText}了家事規則：「${configForm.name}」`, type: 'info', time: new Date().toLocaleTimeString() 
+         id: logId, msg: `${currentUser.name} ${actionTypeText}了家事：「${configForm.name}」`, type: 'info', time: new Date().toLocaleTimeString() 
       };
 
       await update(ref(db), updates);
 
       setIsEditingConfig(false);
-      setAlertMsg("排班已更新！");
+      setAlertMsg("家事設定已更新！");
       
       const flexActionText = editingConfigId ? '家事編輯' : '家事新增';
-      sendConfigFlex(flexActionText, configForm.name, configForm.price, freqNum, nextDate);
+      sendConfigFlex(flexActionText, configForm.name, configForm.price, freqNum, configForm.nextDate);
 
     } catch (error) {
       console.error(error);
@@ -789,7 +863,7 @@ export default function RoomieTaskApp() {
        const targetConfig = taskConfigs.find(c => c.id === deleteTarget.id);
        const targetName = targetConfig ? targetConfig.name : '未知家事';
        const targetPrice = targetConfig ? targetConfig.price : 0;
-       const targetFreq = targetConfig && typeof targetConfig.freq === 'string' ? parseInt(targetConfig.freq.match(/\d+/)?.[0] || '7') : (targetConfig ? targetConfig.freq : 7);
+       const targetFreq = targetConfig && typeof targetConfig.freq === 'string' ? parseInt(targetConfig.freq.match(/\d+/)?.[0] || '0') : (targetConfig ? targetConfig.freq : 0);
        const targetDate = targetConfig ? (targetConfig.nextDate || '未知') : '未知';
 
        const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
@@ -804,12 +878,12 @@ export default function RoomieTaskApp() {
 
        const logId = Date.now();
        updates[`groups/${groupId}/logs/${logId}`] = { 
-          id: logId, msg: `${currentUser.name} 刪除了家事規則：「${targetName}」`, type: 'warning', time: new Date().toLocaleTimeString() 
+          id: logId, msg: `${currentUser.name} 刪除了家事：「${targetName}」`, type: 'warning', time: new Date().toLocaleTimeString() 
        };
 
        await update(ref(db), updates);
        setDeleteTarget(null);
-       setAlertMsg("已刪除該家事規則！");
+       setAlertMsg("已刪除該家事設定！");
 
        sendConfigFlex('家事刪除', targetName, targetPrice, targetFreq, targetDate); 
     }
@@ -1002,6 +1076,7 @@ export default function RoomieTaskApp() {
                   </div> :
                   allTasks.slice(0, allTasksLimit).map(task => {
                     const isOpen = task.status === 'open';
+                    const isPublic = !task.originalHolderId;
                     const holder = users.find(u => u.id === task.currentHolderId);
                     return (
                       <div key={task.id} className={`p-4 rounded-2xl shadow-sm border flex items-center justify-between transition-colors ${isOpen ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100'}`}>
@@ -1012,7 +1087,10 @@ export default function RoomieTaskApp() {
                               {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
                               <span className="text-xs text-gray-500 font-bold truncate">{holder ? holder.name : '未分配'}</span>
                             </div>
-                            <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                              {isPublic && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
+                            </div>
                             <div className="text-sm text-[#28C8C8] font-bold mt-0.5">{task.date}</div>
                           </div>
                         </div>
@@ -1035,6 +1113,7 @@ export default function RoomieTaskApp() {
                   </div> :
                   historyTasks.map(task => {
                     const isFailed = task.status === 'failed';
+                    const isPublic = !task.originalHolderId;
                     const holder = users.find(u => u.id === (task.currentHolderId || task.originalHolderId));
                     
                     let guiltyUserId = task.currentHolderId;
@@ -1054,7 +1133,10 @@ export default function RoomieTaskApp() {
                               {holder && <img src={holder.avatar} className="w-4 h-4 rounded-full"/>}
                               <span className="text-xs text-gray-500 font-bold truncate">{holder ? holder.name : '未知'}</span>
                             </div>
-                            <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-bold text-base text-gray-800 truncate">{task.name}</div>
+                              {isPublic && <span className="text-[10px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
+                            </div>
                             <div className="text-sm text-gray-500 font-bold mt-0.5">{task.date}</div>
                           </div>
                         </div>
@@ -1174,32 +1256,41 @@ export default function RoomieTaskApp() {
                 <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] hover:bg-[#28C8C8]/20 px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"><Plus size={16}/> 新增家事</button>
               </div>
               <div className="space-y-3">
-                {taskConfigs.map(c => (
-                  <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 border border-transparent hover:border-gray-200 rounded-xl transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl">{c.icon}</div>
-                      <div>
-                        <div className="font-bold text-base text-gray-800">{c.name}</div>
-                        <div className="text-sm text-gray-500 font-bold mt-0.5"><span className="text-[#28C8C8]">${c.price}</span> / {c.freq}</div>
+                {taskConfigs.map(c => {
+                  const isPublic = !c.assigneeOrder || c.assigneeOrder.length === 0;
+                  const isOneTime = c.freq === 0 || c.freq === '0' || c.freq === '一次性';
+                  return (
+                    <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 border border-transparent hover:border-gray-200 rounded-xl transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-3xl">{c.icon}</div>
+                        <div>
+                          <div className="font-bold text-base text-gray-800 flex items-center gap-2">
+                            {c.name}
+                            {isPublic && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-bold shrink-0">公共</span>}
+                          </div>
+                          <div className="text-sm text-gray-500 font-bold mt-0.5">
+                            <span className="text-[#28C8C8]">${c.price}</span> / {isOneTime ? '一次性' : c.freq}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => { 
+                           setEditingConfigId(c.id); 
+                           const freqNum = c.freq && typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '0') : (c.freq || 0);
+                           setConfigForm({ 
+                             ...c, 
+                             freq: freqNum, 
+                             nextDate: c.nextDate || getTodayString(), 
+                             assigneeOrder: c.assigneeOrder || [],
+                             nextAssigneeId: c.nextAssigneeId
+                           }); 
+                           setIsEditingConfig(true); 
+                        }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
+                        <button onClick={() => setDeleteTarget({ type: 'config', id: c.id })} className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-colors"><Trash2 size={18}/></button>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { 
-                         setEditingConfigId(c.id); 
-                         const freqNum = c.freq && typeof c.freq === 'string' ? parseInt(c.freq.match(/\d+/)?.[0] || '7') : 7;
-                         setConfigForm({ 
-                           ...c, 
-                           freq: freqNum, 
-                           nextDate: c.nextDate || getTodayString(), 
-                           assigneeOrder: c.assigneeOrder || users.map(u => u.id),
-                           nextAssigneeId: c.nextAssigneeId
-                         }); 
-                         setIsEditingConfig(true); 
-                      }} className="p-2 text-gray-400 hover:text-[#28C8C8] hover:bg-white rounded-lg transition-colors"><Edit2 size={18}/></button>
-                      <button onClick={() => setDeleteTarget({ type: 'config', id: c.id })} className="p-2 text-gray-400 hover:text-red-500 hover:bg-white rounded-lg transition-colors"><Trash2 size={18}/></button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -1225,7 +1316,7 @@ export default function RoomieTaskApp() {
                {taskActionConfirm.action === 'revert' && '確定補按完成？'}
              </h3>
              <p className="text-gray-500 mb-6 text-sm font-bold leading-relaxed px-2">
-               {taskActionConfirm.action === 'complete' && `點擊後即完成「${taskActionConfirm.task.name}」`}
+               {taskActionConfirm.action === 'complete' && (!taskActionConfirm.task.originalHolderId ? `這是一項公共懸賞！完成「${taskActionConfirm.task.name}」可從其他人身上獲得賞金！` : `點擊後即完成「${taskActionConfirm.task.name}」`)}
                {taskActionConfirm.action === 'release' && (
                  <>
                    釋出「{taskActionConfirm.task.name}」將扣除 ${taskActionConfirm.task.price} <br />
@@ -1383,10 +1474,12 @@ export default function RoomieTaskApp() {
               <input type="number" id="task-freq" name="taskFreq" value={configForm.freq === 0 ? '' : configForm.freq} onChange={e => setConfigForm({...configForm, freq: e.target.value === '' ? 0 : Number(e.target.value)})} className="w-full h-14 px-4 pl-14 bg-gray-50 border border-gray-200 rounded-2xl font-mono text-xl font-bold outline-none focus:border-[#28C8C8] text-left transition-colors"/>
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">每</span>
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-lg">日一次</span>
+              <span className="block mt-1.5 ml-2 text-xs text-gray-400 font-bold">💡 填入 0 代表「一次性任務」</span>
             </div>
 
             <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border border-gray-100">
               <span className="text-sm font-bold text-gray-700 block text-center">設定排班順序</span>
+              <span className="block text-center text-xs text-orange-500 font-bold mb-2">若不選成員，即為「公共懸賞單」，賞金將由其他人平攤支付！</span>
               <div id="assignee-order" className="flex gap-4 overflow-x-auto pb-2 justify-center">
                 {users.map(u => {
                   if (!u || !u.id) return null; 
