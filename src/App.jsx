@@ -97,6 +97,7 @@ export default function RoomieTaskApp() {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  // 一般文字推播
   const sendLiffMessage = async (msg) => {
     try {
       if (liff.isInClient()) {
@@ -104,6 +105,75 @@ export default function RoomieTaskApp() {
       }
     } catch (e) {
       console.error("發送 LINE 訊息失敗:", e);
+    }
+  };
+
+  // 🌟 新增：家事設定專屬的 Flex Message 推播
+  const sendConfigFlexMessage = async (actionText, configName, price, freq, startDate) => {
+    try {
+      if (liff.isInClient()) {
+        const flexMsg = {
+          type: "flex",
+          altText: `家事交易所通知：${actionText} ${configName}`,
+          contents: {
+            type: "bubble",
+            header: {
+              type: "box",
+              layout: "vertical",
+              backgroundColor: "#FFDC35",
+              paddingAll: "12px",
+              contents: [
+                {
+                  type: "text",
+                  text: actionText,
+                  weight: "bold",
+                  color: "#333333",
+                  size: "sm"
+                }
+              ]
+            },
+            body: {
+              type: "box",
+              layout: "vertical",
+              paddingAll: "20px",
+              contents: [
+                {
+                  type: "text",
+                  text: configName,
+                  weight: "bold",
+                  size: "xl",
+                  color: "#111111",
+                  wrap: true
+                },
+                {
+                  type: "text",
+                  text: `每次 $${price}`,
+                  size: "sm",
+                  color: "#555555",
+                  margin: "md"
+                },
+                {
+                  type: "text",
+                  text: `每 ${freq} 日一次`,
+                  size: "sm",
+                  color: "#555555",
+                  margin: "sm"
+                },
+                {
+                  type: "text",
+                  text: `排班起始日 ${startDate}`,
+                  size: "sm",
+                  color: "#555555",
+                  margin: "sm"
+                }
+              ]
+            }
+          }
+        };
+        await liff.sendMessages([flexMsg]);
+      }
+    } catch (e) {
+      console.error("發送 LINE Flex 訊息失敗:", e);
     }
   };
 
@@ -666,16 +736,18 @@ export default function RoomieTaskApp() {
       updates[`groups/${groupId}/taskConfigs/${id}`] = configData;
 
       const logId = Date.now();
-      const actionType = editingConfigId ? '編輯' : '新增';
+      const actionTypeText = editingConfigId ? '編輯' : '新增';
       updates[`groups/${groupId}/logs/${logId}`] = { 
-         id: logId, msg: `${currentUser.name} ${actionType}了家事規則：「${configForm.name}」`, type: 'info', time: new Date().toLocaleTimeString() 
+         id: logId, msg: `${currentUser.name} ${actionTypeText}了家事規則：「${configForm.name}」`, type: 'info', time: new Date().toLocaleTimeString() 
       };
 
       await update(ref(db), updates);
 
       setIsEditingConfig(false);
       setAlertMsg("排班已更新！");
-      sendLiffMessage(`🏠 家事交易所通知\n我剛剛${actionType}了家事規則：「${configForm.name}」！`); 
+      
+      const flexActionText = editingConfigId ? '編輯家事' : '新增家事';
+      sendConfigFlexMessage(flexActionText, configForm.name, configForm.price, freqNum, nextDate);
 
     } catch (error) {
       console.error(error);
@@ -689,6 +761,9 @@ export default function RoomieTaskApp() {
     if (deleteTarget && deleteTarget.type === 'config') {
        const targetConfig = taskConfigs.find(c => c.id === deleteTarget.id);
        const targetName = targetConfig ? targetConfig.name : '未知家事';
+       const targetPrice = targetConfig ? targetConfig.price : 0;
+       const targetFreq = targetConfig && typeof targetConfig.freq === 'string' ? parseInt(targetConfig.freq.match(/\d+/)?.[0] || '7') : (targetConfig ? targetConfig.freq : 7);
+       const targetDate = targetConfig ? (targetConfig.nextDate || '未知') : '未知';
 
        const tasksSnap = await get(ref(db, `groups/${groupId}/tasks`));
        const updates = {};
@@ -708,7 +783,8 @@ export default function RoomieTaskApp() {
        await update(ref(db), updates);
        setDeleteTarget(null);
        setAlertMsg("已刪除該家事規則！");
-       sendLiffMessage(`🏠 家事交易所通知\n我剛剛刪除了家事規則：「${targetName}」！`); 
+
+       sendConfigFlexMessage('刪除家事', targetName, targetPrice, targetFreq, targetDate); 
     }
   };
 
