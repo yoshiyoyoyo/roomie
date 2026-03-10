@@ -105,7 +105,7 @@ export default function RoomieTaskApp() {
     return dStr;
   };
 
-  // 🌟 修改：完全套用你提供的 Flex Message JSON 結構
+  // 🌟 修改：套用新的 hecto size 與置中設計的 Flex Message
   const sendLiffFlexMessage = async (title, color, dateStr, taskName, subtitle) => {
     try {
       if (liff.isInClient()) {
@@ -117,7 +117,7 @@ export default function RoomieTaskApp() {
               type: "box",
               layout: "baseline",
               spacing: "sm",
-              contents: [{ type: "text", text: taskName, color: "#3C3C3C", size: "lg", flex: 1 }]
+              contents: [{ type: "text", text: taskName, color: "#3C3C3C", size: "xl", flex: 1, weight: "bold", align: "center" }]
             }
           : {
               type: "box",
@@ -131,6 +131,7 @@ export default function RoomieTaskApp() {
           altText: `家事交易所：${title}`,
           contents: {
             type: "bubble",
+            size: "hecto",
             body: {
               type: "box",
               layout: "vertical",
@@ -140,7 +141,7 @@ export default function RoomieTaskApp() {
                   layout: "baseline",
                   margin: "md",
                   contents: [
-                    { type: "text", text: title, color: color, size: "xl", flex: 1, margin: "none" }
+                    { type: "text", text: title, color: color, size: "xl", flex: 1, margin: "none", weight: "bold", align: "center" }
                   ]
                 },
                 {
@@ -149,14 +150,14 @@ export default function RoomieTaskApp() {
                   margin: "lg",
                   spacing: "sm",
                   contents: [
-                    { type: "text", text: dateStr, color: "#aaaaaa" },
+                    { type: "text", text: dateStr, color: "#aaaaaa", align: "center", size: "sm" },
                     taskNameBox,
                     {
                       type: "box",
                       layout: "baseline",
                       spacing: "sm",
                       contents: [
-                        { type: "text", text: subtitle, color: "#aaaaaa", size: "sm", flex: 1 }
+                        { type: "text", text: subtitle, color: "#aaaaaa", size: "sm", flex: 1, align: "center" }
                       ]
                     }
                   ]
@@ -173,12 +174,6 @@ export default function RoomieTaskApp() {
                   style: "link",
                   height: "sm",
                   action: { type: "uri", label: "查看", uri: uri }
-                },
-                {
-                  type: "box",
-                  layout: "vertical",
-                  contents: [],
-                  margin: "sm"
                 }
               ],
               flex: 0
