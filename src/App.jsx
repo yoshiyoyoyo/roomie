@@ -24,7 +24,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// 🌟 修改：使用本地時區取得今天日期
 const getTodayString = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -33,7 +32,6 @@ const getTodayString = () => {
   return `${year}-${month}-${day}`;
 };
 
-// 🌟 修改：使用本地時區計算未來日期
 const addDays = (dateStr, days) => {
   const [y, m, d] = dateStr.split('-');
   const result = new Date(y, m - 1, d);
@@ -948,7 +946,8 @@ export default function RoomieTaskApp() {
   const limitDate = addDays(todayStr, 45);
   const validConfigIds = taskConfigs.map(c => c.id);
 
-  const myTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.currentHolderId === currentUser?.id && t.status === 'pending');
+  // 🌟 修改：今日待辦只顯示今天以前（含今天）的任務
+  const myTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.currentHolderId === currentUser?.id && t.status === 'pending' && t.date <= todayStr);
   
   const allTasks = currentCycleTasks.filter(t => validConfigIds.includes(t.configId) && t.date >= todayStr && t.date <= limitDate && (t.status === 'pending' || t.status === 'open'));
 
@@ -957,7 +956,7 @@ export default function RoomieTaskApp() {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 
-  const hasPendingTodayTasks = myTasks.some(t => t.date <= todayStr);
+  const hasPendingTodayTasks = myTasks.length > 0;
   const hasOpenTasks = allTasks.some(t => t.status === 'open');
 
   const scheduledConfigs = taskConfigs.filter(c => c.type !== 'onetime');
@@ -1048,9 +1047,10 @@ export default function RoomieTaskApp() {
           <div className="space-y-6 animate-in fade-in">
             <div className="sticky top-0 z-20 bg-gray-50 pt-2 pb-4 px-1">
               <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
+                {/* 🌟 修改標籤名稱 */}
                 <button onClick={() => setRosterTab('mine')} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex justify-center items-center ${rosterTab === 'mine' ? 'bg-[#28C8C8]/10 text-[#28C8C8]' : 'text-gray-400 hover:text-gray-600'}`}>
                   <div className="relative">
-                    待辦
+                    今日待辦
                     {hasPendingTodayTasks && <span className="absolute -top-0.5 -right-2.5 w-2 h-2 bg-red-500 rounded-full"></span>}
                   </div>
                 </button>
@@ -1068,7 +1068,7 @@ export default function RoomieTaskApp() {
               <div className="space-y-3">
                 {myTasks.length === 0 ? 
                   <div className="p-10 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-base mb-4">目前沒有任務</p>
+                    <p className="text-gray-500 text-base font-bold mb-4">太棒了！今天沒有您的待辦家事 🎉</p>
                     <button onClick={handleOpenAddConfig} className="bg-[#28C8C8]/10 text-[#28C8C8] px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 mx-auto hover:bg-[#28C8C8]/20 transition-colors"><Plus size={16}/> 新增家事</button>
                   </div> :
                   myTasks.slice(0, myTasksLimit).map(task => {
